@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>网页操作执行器</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h2>🎯 网页操作执行器</h2>
+      <span class="version">v1.8.0</span>
+    </div>
+
+    <!-- 工具栏 -->
+    <div class="toolbar">
+      <div class="search-box">
+        <input type="text" id="searchInput" placeholder="🔍 搜索操作..." class="search-input">
+      </div>
+      <div class="toolbar-actions">
+        <button id="toggleDarkMode" class="btn-icon-only" title="切换暗色模式">🌙</button>
+        <button id="toggleBatchMode" class="btn-icon-only" title="批量选择">☑️</button>
+      </div>
+    </div>
+
+    <!-- 批量操作栏 -->
+    <div class="batch-bar" id="batchBar" style="display: none;">
+      <label class="checkbox-label">
+        <input type="checkbox" id="selectAll">
+        <span>全选</span>
+      </label>
+      <button id="batchDelete" class="btn btn-danger">🗑 删除选中</button>
+      <button id="cancelBatch" class="btn btn-secondary">取消</button>
+    </div>
+
+    <!-- 操作列表 -->
+    <div class="operations-list" id="operationsList">
+      <!-- 动态生成 -->
+    </div>
+
+    <!-- 重复执行控制 -->
+    <div class="repeat-controls">
+      <div class="repeat-header">
+        <label class="checkbox-label">
+          <input type="checkbox" id="enableRepeat">
+          <span>🔄 启用重复执行</span>
+        </label>
+      </div>
+
+      <div class="repeat-settings" id="repeatSettings" style="display: none;">
+        <div class="repeat-row">
+          <div class="repeat-mode">
+            <label>重复模式</label>
+            <select id="repeatMode">
+              <option value="count">指定次数</option>
+              <option value="infinite">无限循环</option>
+              <option value="condition">条件循环</option>
+            </select>
+          </div>
+          <div class="repeat-count" id="repeatCountGroup">
+            <label>次数</label>
+            <input type="number" id="repeatCount" value="3" min="1" max="9999">
+          </div>
+        </div>
+
+        <div class="repeat-condition" id="repeatConditionGroup" style="display: none;">
+          <label>停止条件</label>
+          <select id="conditionType">
+            <option value="elementExists">元素出现时停止</option>
+            <option value="elementDisappears">元素消失时停止</option>
+          </select>
+          <input type="text" id="conditionSelector" placeholder="CSS选择器">
+          <div class="condition-timeout">
+            <label>超时(ms)</label>
+            <input type="number" id="conditionTimeout" value="30000" min="1000">
+          </div>
+        </div>
+
+        <div class="repeat-row">
+          <div class="repeat-interval">
+            <label>间隔(ms)</label>
+            <input type="number" id="repeatInterval" value="2000" min="0" max="300000">
+          </div>
+        </div>
+
+        <div class="repeat-options">
+          <label class="checkbox-label">
+            <input type="checkbox" id="stopOnError" checked>
+            <span>遇错停止</span>
+          </label>
+          <label class="checkbox-label">
+            <input type="checkbox" id="showProgress" checked>
+            <span>显示进度</span>
+          </label>
+        </div>
+      </div>
+    </div>
+
+    <!-- 操作按钮 -->
+    <div class="controls">
+      <button id="addInput" class="btn btn-primary" title="添加输入操作">
+        <span class="btn-icon">📝</span> 输入
+      </button>
+      <button id="addClick" class="btn btn-success" title="添加点击操作">
+        <span class="btn-icon">👆</span> 点击
+      </button>
+      <button id="addScroll" class="btn btn-info" title="添加滑动操作">
+        <span class="btn-icon">↕️</span> 滑动
+      </button>
+      <button id="addRefresh" class="btn btn-refresh" title="添加刷新操作">
+        <span class="btn-icon">🔄</span> 刷新
+      </button>
+      <button id="addWait" class="btn btn-wait" title="添加等待操作">
+        <span class="btn-icon">⏳</span> 等待
+      </button>
+      <button id="addSelect" class="btn btn-select" title="添加下拉选择操作">
+        <span class="btn-icon">📋</span> 选择
+      </button>
+      <button id="addScript" class="btn btn-script" title="添加脚本执行操作">
+        <span class="btn-icon">⚡</span> 脚本
+      </button>
+      <button id="addExtract" class="btn btn-extract" title="添加元素提取操作">
+        <span class="btn-icon">🔍</span> 提取
+      </button>
+      <button id="addKeyboard" class="btn btn-keyboard" title="添加键盘操作">
+        <span class="btn-icon">⌨️</span> 键盘
+      </button>
+      <button id="addScreenshot" class="btn btn-screenshot" title="添加截屏操作">
+        <span class="btn-icon">📷</span> 截屏
+      </button>
+      <button id="addClipboard" class="btn btn-clipboard" title="添加剪贴板操作">
+        <span class="btn-icon">📎</span> 剪贴板
+      </button>
+      <button id="addHttpRequest" class="btn btn-http" title="添加HTTP请求操作">
+        <span class="btn-icon">🌐</span> HTTP
+      </button>
+      <button id="addTab" class="btn btn-tab" title="添加标签页操作">
+        <span class="btn-icon">🗂</span> 标签页
+      </button>
+      <button id="addNotification" class="btn btn-notification" title="添加通知操作">
+        <span class="btn-icon">🔔</span> 通知
+      </button>
+      <button id="addCookie" class="btn btn-cookie" title="添加Cookie操作">
+        <span class="btn-icon">🍪</span> Cookie
+      </button>
+      <button id="addHover" class="btn btn-hover" title="添加悬停操作">
+        <span class="btn-icon">🖱</span> 悬停
+      </button>
+      <button id="addDoubleClick" class="btn btn-dblclick" title="添加双击操作">
+        <span class="btn-icon">👆👆</span> 双击
+      </button>
+      <button id="addDrag" class="btn btn-drag" title="添加拖拽操作">
+        <span class="btn-icon">🔀</span> 拖拽
+      </button>
+      <button id="addRightClick" class="btn btn-rightclick" title="添加右键点击操作">
+        <span class="btn-icon">🖱</span> 右键
+      </button>
+      <button id="addFileUpload" class="btn btn-fileupload" title="添加文件上传操作">
+        <span class="btn-icon">📁</span> 上传
+      </button>
+    </div>
+
+    <!-- 执行控制 -->
+    <div class="action-controls">
+      <button id="executeAll" class="btn btn-execute">
+        ▶ 执行操作
+      </button>
+      <button id="stopExecution" class="btn btn-stop" style="display: none;">
+        ⏹ 停止
+      </button>
+      <button id="clearAll" class="btn btn-clear">
+        🗑 清空
+      </button>
+    </div>
+
+    <!-- 进度显示 -->
+    <div class="progress-container" id="progressContainer" style="display: none;">
+      <div class="progress-info">
+        <span id="progressText">执行中...</span>
+        <span id="progressCount">0/0</span>
+      </div>
+      <div class="progress-bar">
+        <div class="progress-fill" id="progressFill"></div>
+      </div>
+    </div>
+
+    <!-- 状态信息 -->
+    <div class="status" id="status"></div>
+
+    <!-- 预设模板 -->
+    <div class="presets">
+      <h4>📋 快速预设</h4>
+      <div class="preset-buttons">
+        <button id="presetLogin" class="btn btn-preset">登录表单</button>
+        <button id="presetSearch" class="btn btn-preset">搜索操作</button>
+        <button id="presetRefresh" class="btn btn-preset">刷新重试</button>
+        <button id="presetRepeat" class="btn btn-preset">重复刷新</button>
+      </div>
+    </div>
+
+    <!-- 导入导出 -->
+    <div class="io-section">
+      <h4>💾 配置管理</h4>
+      <div class="io-buttons">
+        <button id="exportConfig" class="btn btn-io">⬇ 导出配置</button>
+        <button id="exportAsJS" class="btn btn-io">📜 导出JS</button>
+        <button id="importConfig" class="btn btn-io">⬆ 导入配置</button>
+        <input type="file" id="importFile" accept=".json" style="display:none">
+      </div>
+      <div class="var-hint">
+        💡 支持变量: <code>{{timestamp}}</code> <code>{{date}}</code> <code>{{random}}</code> <code>{{uuid}}</code> <code>{{loopIndex}}</code>
+      </div>
+    </div>
+
+    <!-- 执行日志 -->
+    <div class="log-section">
+      <div class="log-header">
+        <h4>📜 执行日志</h4>
+        <button id="clearLog" class="btn btn-mini">清空</button>
+      </div>
+      <div class="log-container" id="logContainer">
+        <div class="log-empty">暂无日志</div>
+      </div>
+    </div>
+
+    <!-- 底部信息 -->
+    <div class="footer">
+      <a href="#" id="helpLink">📖 使用帮助</a>
+      <span class="footer-sep">|</span>
+      <span class="shortcut-info">快捷键: Ctrl+Shift+E 执行 / Ctrl+Shift+S 停止</span>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
