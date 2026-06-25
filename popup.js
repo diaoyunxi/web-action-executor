@@ -113,6 +113,7 @@ class OperationManager {
 
   async saveLogs() {
     try {
+      // 只保留最近 100 条日志
       if (this.logs.length > 100) {
         this.logs = this.logs.slice(-100);
       }
@@ -198,12 +199,14 @@ class OperationManager {
       document.getElementById(id).addEventListener('change', () => this.saveRepeatSettings());
     });
 
+    // 导入导出
     document.getElementById('exportConfig').addEventListener('click', () => this.exportConfig());
     document.getElementById('importConfig').addEventListener('click', () => {
       document.getElementById('importFile').click();
     });
     document.getElementById('importFile').addEventListener('change', (e) => this.importConfig(e));
 
+    // 日志
     document.getElementById('clearLog').addEventListener('click', () => {
       this.logs = [];
       this.saveLogs();
@@ -211,17 +214,20 @@ class OperationManager {
       this.showStatus('✅ 日志已清空', 'success');
     });
 
+    // 搜索过滤
     document.getElementById('searchInput').addEventListener('input', (e) => {
       this.searchKeyword = e.target.value.toLowerCase();
       this.renderOperations();
     });
 
+    // 暗色模式切换
     document.getElementById('toggleDarkMode').addEventListener('click', () => {
       this.darkMode = !this.darkMode;
       this.applyDarkMode();
       chrome.storage.local.set({ darkMode: this.darkMode });
     });
 
+    // 批量模式切换
     document.getElementById('toggleBatchMode').addEventListener('click', () => {
       this.batchMode = !this.batchMode;
       this.selectedOperations.clear();
@@ -230,6 +236,7 @@ class OperationManager {
       this.renderOperations();
     });
 
+    // 批量选择
     document.getElementById('selectAll').addEventListener('change', (e) => {
       if (e.target.checked) {
         this.operations.forEach(op => this.selectedOperations.add(op.id));
@@ -239,12 +246,13 @@ class OperationManager {
       this.renderOperations();
     });
 
+    // 批量删除
     document.getElementById('batchDelete').addEventListener('click', () => {
       if (this.selectedOperations.size === 0) {
         this.showStatus('⚠️ 请先选择要删除的操作', 'warning');
         return;
       }
-      if (confirm(`确定要删除选中的 ${this.selectedOperations.size} 个操作吗？`)) {
+      if (confirm(`确定要删除选中的 ${this.selectedOperations.size} 个操作吗?`)) {
         this.operations = this.operations.filter(op => !this.selectedOperations.has(op.id));
         this.selectedOperations.clear();
         this.saveOperations();
@@ -253,6 +261,7 @@ class OperationManager {
       }
     });
 
+    // 取消批量模式
     document.getElementById('cancelBatch').addEventListener('click', () => {
       this.batchMode = false;
       this.selectedOperations.clear();
@@ -261,8 +270,10 @@ class OperationManager {
       this.renderOperations();
     });
 
+    // 导出为JS
     document.getElementById('exportAsJS').addEventListener('click', () => this.exportAsJavaScript());
 
+    // 监听后台快捷键消息和拾取器消息
     chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       if (request.action === 'shortcut-execute') {
         this.executeAllOperations();
@@ -359,6 +370,7 @@ class OperationManager {
       this.showStatus('🎯 请在页面中点击目标元素', 'info');
       this.addLog('info', '启动元素拾取器');
 
+      // 关闭 popup 让用户点击页面
       window.close();
     } catch (error) {
       console.error('启动拾取器失败:', error);
@@ -369,6 +381,7 @@ class OperationManager {
   handlePickerResult(request) {
     this.pickerMode = false;
 
+    // 保存选择器到 storage,下次打开 popup 时应用
     chrome.storage.local.set({
       pendingPickerSelector: request.selector,
       pendingPickerField: this.pendingPickerField
@@ -384,17 +397,21 @@ class OperationManager {
     this.addLog('warning', '拾取已取消');
   }
 
+  // 检查是否有待应用的拾取结果
   async checkPendingPickerResult() {
     try {
       const result = await chrome.storage.local.get(['pendingPickerSelector', 'pendingPickerField']);
       if (result.pendingPickerSelector && result.pendingPickerField) {
+        // 应用选择器到对应字段
         const fieldId = result.pendingPickerField;
         const input = document.querySelector(`[data-picker-target="${fieldId}"]`);
         if (input) {
           input.value = result.pendingPickerSelector;
+          // 触发 change 事件更新数据
           input.dispatchEvent(new Event('change', { bubbles: true }));
         }
 
+        // 清除临时数据
         chrome.storage.local.remove(['pendingPickerSelector', 'pendingPickerField']);
 
         this.showStatus(`✅ 已应用选择器: ${result.pendingPickerSelector}`, 'success');
@@ -423,6 +440,7 @@ class OperationManager {
     console.log(`HTTP请求结果: ${request.status}`, request.preview);
   }
 
+  // 【核心修复】确保 content script 已注入
   async ensureContentScriptInjected(tab) {
     try {
       const response = await chrome.tabs.sendMessage(tab.id, { action: 'ping' });
@@ -430,7 +448,7 @@ class OperationManager {
         return;
       }
     } catch (error) {
-      console.log('Content script 未响应，尝试注入...');
+      console.log('Content script 未响应,尝试注入...');
     }
 
     try {
@@ -443,7 +461,7 @@ class OperationManager {
       await chrome.tabs.sendMessage(tab.id, { action: 'ping' });
     } catch (error) {
       console.error('Content script 注入失败:', error);
-      throw new Error('无法在此页面执行操作。请刷新页面后重试，或检查是否在浏览器内部页面。');
+      throw new Error('无法在此页面执行操作。请刷新页面后重试,或检查是否在浏览器内部页面。');
     }
   }
 
@@ -457,7 +475,7 @@ class OperationManager {
       } catch (error) {
         lastError = error;
         if (error.message.includes('Receiving end does not exist')) {
-          console.log(`连接失败 (${i + 1}/${maxRetries})，正在重试...`);
+          console.log(`连接失败 (${i + 1}/${maxRetries}),正在重试...`);
           await this.sleep(retryDelay);
         } else {
           throw error;
@@ -563,7 +581,7 @@ class OperationManager {
       return;
     }
 
-    if (confirm(`确定要清空所有 ${this.operations.length} 个操作吗？`)) {
+    if (confirm(`确定要清空所有 ${this.operations.length} 个操作吗?`)) {
       this.operations = [];
       this.saveOperations();
       this.renderOperations();
@@ -616,7 +634,7 @@ class OperationManager {
           throw new Error('无效的配置文件');
         }
 
-        if (!confirm(`将导入 ${config.operations.length} 个操作，是否覆盖当前配置？`)) {
+        if (!confirm(`将导入 ${config.operations.length} 个操作,是否覆盖当前配置?`)) {
           event.target.value = '';
           return;
         }
@@ -758,14 +776,14 @@ class OperationManager {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
 
       if (!tab) {
-        throw new Error('未找到活动标签页，请打开一个网页');
+        throw new Error('未找到活动标签页,请打开一个网页');
       }
 
       if (tab.url.startsWith('chrome://') ||
           tab.url.startsWith('edge://') ||
           tab.url.startsWith('about:') ||
           tab.url.startsWith('chrome-extension://')) {
-        throw new Error('无法在浏览器内部页面执行操作，请打开普通网页');
+        throw new Error('无法在浏览器内部页面执行操作,请打开普通网页');
       }
 
       await this.ensureContentScriptInjected(tab);
@@ -786,7 +804,7 @@ class OperationManager {
       await this.executeLoop(tab, parseInt(document.getElementById('repeatInterval').value) || 2000);
 
       const duration = ((Date.now() - startTime) / 1000).toFixed(2);
-      this.addLog('success', `执行完成，耗时 ${duration} 秒`);
+      this.addLog('success', `执行完成,耗时 ${duration} 秒`);
       this.showStatus(`✅ 完成! (耗时 ${duration}s)`, 'success');
 
     } catch (error) {
@@ -828,10 +846,11 @@ class OperationManager {
           if (response.shouldStop || document.getElementById('stopOnError').checked) {
             throw new Error(response.error || '执行失败');
           }
-          console.warn('操作执行失败，继续:', response.error);
+          console.warn('操作执行失败,继续:', response.error);
           this.addLog('error', `操作失败但继续: ${response.error}`);
         }
 
+        // 条件循环检查
         if (this.totalRepeats === -2) {
           try {
             const conditionResponse = await this.sendMessageWithRetry(tab.id, {
@@ -841,8 +860,8 @@ class OperationManager {
             });
 
             if (conditionResponse?.conditionMet) {
-              this.showStatus('✅ 条件满足，停止执行', 'success');
-              this.addLog('success', '条件满足，停止条件循环');
+              this.showStatus('✅ 条件满足,停止执行', 'success');
+              this.addLog('success', '条件满足,停止条件循环');
               break;
             }
           } catch (error) {
@@ -865,13 +884,13 @@ class OperationManager {
       } catch (error) {
         if (error.message === '用户停止执行') throw error;
         if (error.message.includes('无法连接到页面')) {
-          throw new Error('页面连接丢失，请刷新页面后重试');
+          throw new Error('页面连接丢失,请刷新页面后重试');
         }
 
         if (document.getElementById('stopOnError').checked) {
           throw error;
         }
-        console.error('执行出错，继续:', error);
+        console.error('执行出错,继续:', error);
         this.addLog('error', `继续执行 - 错误: ${error.message}`);
       }
     }
@@ -950,6 +969,7 @@ class OperationManager {
   renderOperations() {
     const container = document.getElementById('operationsList');
 
+    // 搜索过滤
     let filteredOps = this.operations;
     if (this.searchKeyword) {
       filteredOps = this.operations.filter(op => {
@@ -1002,6 +1022,7 @@ class OperationManager {
     `;
     }).join('');
 
+    // 批量模式下的复选框事件
     if (this.batchMode) {
       document.querySelectorAll('.batch-checkbox').forEach(cb => {
         cb.addEventListener('change', (e) => {
@@ -1011,6 +1032,7 @@ class OperationManager {
           } else {
             this.selectedOperations.delete(id);
           }
+          // 更新选中状态样式
           const item = e.target.closest('.operation-item');
           item.classList.toggle('selected', e.target.checked);
         });
@@ -1297,7 +1319,7 @@ class OperationManager {
               <input type="text" class="field-httpSaveVariable" data-id="${op.id}" value="${this.escapeHtml(op.httpSaveVariable || '')}" placeholder="responseData">
             </div>
           </div>
-          <div class="http-hint">💡 响应内容可通过变量引用，支持GET/POST/PUT/DELETE/PATCH</div>`;
+          <div class="http-hint">💡 响应内容可通过变量引用,支持GET/POST/PUT/DELETE/PATCH</div>`;
         break;
 
       case 'tab':
@@ -1396,7 +1418,7 @@ class OperationManager {
               <input type="number" class="field-hoverDuration" data-id="${op.id}" value="${op.hoverDuration || 1000}" min="100">
             </div>
           </div>
-          <div class="hover-hint">💡 悬停操作会触发 mouseover/mouseenter 事件，适用于下拉菜单等场景</div>`;
+          <div class="hover-hint">💡 悬停操作会触发 mouseover/mouseenter 事件,适用于下拉菜单等场景</div>`;
         break;
 
       case 'doubleClick':
@@ -1424,7 +1446,7 @@ class OperationManager {
               <input type="text" class="field-targetSelector" data-id="${op.id}" data-picker-target="targetSelector-${op.id}" value="${this.escapeHtml(op.targetSelector || '')}" placeholder="#droppable, .target">
             </div>
           </div>
-          <div class="drag-hint">💡 拖拽操作支持HTML5拖放API和鼠标事件模拟，适用于拖拽排序、文件拖放等场景</div>`;
+          <div class="drag-hint">💡 拖拽操作支持HTML5拖放API和鼠标事件模拟,适用于拖拽排序、文件拖放等场景</div>`;
         break;
 
       case 'rightClick':
@@ -1435,7 +1457,7 @@ class OperationManager {
               <input type="text" class="field-selector" data-id="${op.id}" data-picker-target="selector-${op.id}" value="${this.escapeHtml(op.selector || '')}" placeholder="#menu, .context-target">
             </div>
           </div>
-          <div class="rightclick-hint">💡 右键点击会触发 contextmenu 事件，适用于自定义右键菜单</div>`;
+          <div class="rightclick-hint">💡 右键点击会触发 contextmenu 事件,适用于自定义右键菜单</div>`;
         break;
 
       case 'fileUpload':
@@ -1450,7 +1472,7 @@ class OperationManager {
             <label>文件路径 (每行一个)</label>
             <textarea class="field-filePaths" data-id="${op.id}" rows="3" placeholder="C:\\path\\to\\file1.jpg&#10;C:\\path\\to\\file2.png">${this.escapeHtml(op.filePaths || '')}</textarea>
           </div>
-          <div class="fileupload-hint">💡 文件上传仅支持 &lt;input type="file"&gt; 元素，支持多文件上传</div>`;
+          <div class="fileupload-hint">💡 文件上传仅支持 &lt;input type="file"&gt; 元素,支持多文件上传</div>`;
         break;
     }
 
@@ -1517,6 +1539,7 @@ class OperationManager {
           }
           this.updateOperation(id, prop, val);
         });
+        // textarea 需要监听 input 事件
         if (input.tagName === 'TEXTAREA') {
           input.addEventListener('input', (e) => {
             const id = parseInt(e.target.dataset.id);
@@ -1721,7 +1744,7 @@ Ctrl+Shift+S - 停止执行
 ⬇ 导出当前所有操作为 JSON
 ⬆ 从 JSON 文件导入操作配置
 
-💡 如遇连接错误，请刷新页面后重试`);
+💡 如遇连接错误,请刷新页面后重试`);
   }
 }
 
