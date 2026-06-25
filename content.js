@@ -1,0 +1,758 @@
+/**
+ * 网页操作执行器 - 内容脚本 v1.5.0
+ * 在目标页面中执行实际操作
+ * 支持: 输入、点击、滑动、刷新、等待、选择、脚本、提取、键盘、截屏、剪贴板
+ */
+
+class OperationExecutor {
+  constructor() {
+    this.shouldStop = false;
+    this.repeatConfig = null;
+    this.loopIndex = 0;
+    this.pickerMode = false;
+    this.pickerCallback = null;
+    this.initMessageListener();
+    this.checkRefreshWait();
+  }
+
+  initMessageListener() {
+    chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+      switch (request.action) {
+        case 'executeOperations':
+          this.shouldStop = false;
+          if (request.repeatInfo && request.repeatInfo.loopIndex) {
+            this.loopIndex = request.repeatInfo.loopIndex;
+          }
+          this.executeOperations(request.operations, request.repeatInfo)
+            .then(() => sendResponse({ success: true }))
+            .catch(error => sendResponse({
+              success: false,
+              error: error.message,
+              shouldStop: this.shouldStop
+            }));
+          return true;
+        case 'stopExecution':
+          this.shouldStop = true;
+          sendResponse({ success: true });
+          return true;
+        case 'setRepeatConfig':
+          this.repeatConfig = request.config;
+          sendResponse({ success: true });
+          return true;
+        case 'checkCondition':
+          const met = this.checkConditionMet(request.conditionType, request.selector);
+          sendResponse({ conditionMet: met });
+          return true;
+        case 'ping':
+          sendResponse({ pong: true });
+          return true;
+        case 'startPicker':
+          this.startElementPicker(request.targetField);
+          sendResponse({ success: true, message: '拾取模式已启动' });
+          return true;
+        case 'stopPicker':
+          this.stopElementPicker();
+          sendResponse({ success: true });
+          return true;
+      }
+    });
+  }
+
+  startElementPicker(targetField) {
+    this.pickerMode = true;
+    this.pickerTargetField = targetField;
+    this.createPickerOverlay();
+    document.addEventListener('mouseover', this.handlePickerHover.bind(this), true);
+    document.addEventListener('mouseout', this.handlePickerOut.bind(this), true);
+    document.addEventListener('click', this.handlePickerClick.bind(this), true);
+    console.log('🎯 元素拾取模式已启动');
+  }
+
+  stopElementPicker() {
+    this.pickerMode = false;
+    this.pickerTargetField = null;
+    this.removePickerOverlay();
+    document.removeEventListener('mouseover', this.handlePickerHover.bind(this), true);
+    document.removeEventListener('mouseout', this.handlePickerOut.bind(this), true);
+    document.removeEventListener('click', this.handlePickerClick.bind(this), true);
+    console.log('🎯 元素拾取模式已停止');
+  }
+
+  createPickerOverlay() {
+    const overlay = document.createElement('div');
+    overlay.id = '__executor_picker_overlay__';
+    overlay.style.cssText = `
+      position: fixed; top: 0; left: 0; right: 0; height: 40px;
+      background: linear-gradient(135deg, #FF9800, #F57C00); color: white;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 14px; font-weight: 500; z-index: 2147483647;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    `;
+    overlay.innerHTML = '🎯 点击页面元素获取选择器 | 按 ESC 取消';
+    document.body.appendChild(overlay);
+    const highlight = document.createElement('div');
+    highlight.id = '__executor_picker_highlight__';
+    highlight.style.cssText = `
+      position: fixed; border: 2px solid #FF9800;
+      background: rgba(255, 152, 0, 0.1); pointer-events: none;
+      z-index: 2147483646; transition: all 0.1s ease; display: none;
+    `;
+    document.body.appendChild(highlight);
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && this.pickerMode) {
+        this.stopElementPicker();
+        chrome.runtime.sendMessage({ action: 'pickerCancelled' });
+      }
+    }, true);
+  }
+
+  removePickerOverlay() {
+    const overlay = document.getElementById('__executor_picker_overlay__');
+    const highlight = document.getElementById('__executor_picker_highlight__');
+    if (overlay) overlay.remove();
+    if (highlight) highlight.remove();
+  }
+
+  handlePickerHover(e) {
+    if (!this.pickerMode) return;
+    e.stopPropagation();
+    const element = e.target;
+    if (element.id === '__executor_picker_overlay__' || element.id === '__executor_picker_highlight__') return;
+    const rect = element.getBoundingClientRect();
+    const highlight = document.getElementById('__executor_picker_highlight__');
+    if (highlight) {
+      highlight.style.display = 'block';
+      highlight.style.top = rect.top + 'px';
+      highlight.style.left = rect.left + 'px';
+      highlight.style.width = rect.width + 'px';
+      highlight.style.height = rect.height + 'px';
+    }
+  }
+
+  handlePickerOut(e) {
+    if (!this.pickerMode) return;
+    const highlight = document.getElementById('__executor_picker_highlight__');
+    if (highlight) highlight.style.display = 'none';
+  }
+
+  handlePickerClick(e) {
+    if (!this.pickerMode) return;
+    e.preventDefault(); e.stopPropagation();
+    const element = e.target;
+    if (element.id === '__executor_picker_overlay__' || element.id === '__executor_picker_highlight__') return;
+    const selector = this.generateSelector(element);
+    console.log('✅ 已获取选择器:', selector);
+    chrome.runtime.sendMessage({
+      action: 'pickerResult', selector: selector,
+      elementInfo: { tagName: element.tagName.toLowerCase(), id: element.id || null, className: element.className || null, text: element.textContent?.substring(0, 50) || null }
+    });
+    this.stopElementPicker();
+  }
+
+  generateSelector(element) {
+    if (element.id) return '#' + CSS.escape(element.id);
+    const uniqueAttrs = ['name', 'data-id', 'data-name', 'aria-label', 'title', 'placeholder'];
+    for (const attr of uniqueAttrs) {
+      const value = element.getAttribute(attr);
+      if (value) {
+        const selector = `${element.tagName.toLowerCase()}[${attr}="${CSS.escape(value)}"]`;
+        if (document.querySelectorAll(selector).length === 1) return selector;
+      }
+    }
+    if (element.className && typeof element.className === 'string') {
+      const classes = element.className.split(' ').filter(c => c && !c.includes(':'));
+      if (classes.length > 0) {
+        for (let i = classes.length; i > 0; i--) {
+          const classSelector = '.' + classes.slice(0, i).map(c => CSS.escape(c)).join('.');
+          const fullSelector = element.tagName.toLowerCase() + classSelector;
+          if (document.querySelectorAll(fullSelector).length === 1) return fullSelector;
+        }
+      }
+    }
+    return this.getElementPath(element);
+  }
+
+  getElementPath(element) {
+    const path = [];
+    let current = element;
+    while (current && current !== document.body) {
+      let selector = current.tagName.toLowerCase();
+      const parent = current.parentElement;
+      if (parent) {
+        const siblings = Array.from(parent.children).filter(c => c.tagName === current.tagName);
+        if (siblings.length > 1) { selector += `:nth-of-type(${siblings.indexOf(current) + 1})`; }
+      }
+      path.unshift(selector);
+      current = parent;
+    }
+    return path.join(' > ');
+  }
+
+  async executeOperations(operations, repeatInfo) {
+    if (repeatInfo) {
+      const totalStr = repeatInfo.total > 0 ? repeatInfo.total : '∞';
+      console.log(`🔄 第 ${repeatInfo.current}/${totalStr} 次执行`);
+      if (repeatInfo.loopIndex) this.loopIndex = repeatInfo.loopIndex;
+    }
+    for (let i = 0; i < operations.length; i++) {
+      if (this.shouldStop) throw new Error('用户停止执行');
+      const op = operations[i];
+      console.log(`📌 [${i + 1}/${operations.length}] ${op.type}: ${op.description || ''}`);
+      try {
+        await this.executeOperation(op);
+        console.log(`✅ 操作 ${i + 1} 完成`);
+      } catch (error) {
+        console.error(`❌ 操作 ${i + 1} 失败:`, error);
+        throw new Error(`步骤 ${i + 1} [${op.description || op.type}] 失败: ${error.message}`);
+      }
+    }
+  }
+
+  async executeOperation(operation) {
+    if (operation.delay > 0) await this.sleep(operation.delay);
+    if (this.shouldStop) throw new Error('用户停止执行');
+    switch (operation.type) {
+      case 'input': await this.executeInput(operation); break;
+      case 'click': await this.executeClick(operation); break;
+      case 'scroll': await this.executeScroll(operation); break;
+      case 'refresh': await this.executeRefresh(operation); break;
+      case 'wait': await this.executeWait(operation); break;
+      case 'select': await this.executeSelect(operation); break;
+      case 'script': await this.executeScript(operation); break;
+      case 'extract': await this.executeExtract(operation); break;
+      case 'keyboard': await this.executeKeyboard(operation); break;
+      case 'screenshot': await this.executeScreenshot(operation); break;
+      case 'clipboard': await this.executeClipboard(operation); break;
+      case 'httpRequest': await this.executeHttpRequest(operation); break;
+      case 'tab': await this.executeTab(operation); break;
+      case 'notification': await this.executeNotification(operation); break;
+      case 'cookie': await this.executeCookie(operation); break;
+      case 'hover': await this.executeHover(operation); break;
+      case 'doubleClick': await this.executeDoubleClick(operation); break;
+      case 'drag': await this.executeDrag(operation); break;
+      case 'rightClick': await this.executeRightClick(operation); break;
+      case 'fileUpload': await this.executeFileUpload(operation); break;
+      default: throw new Error(`未知操作类型: ${operation.type}`);
+    }
+  }
+
+  substituteVariables(input) {
+    if (input === null || input === undefined) return input;
+    if (typeof input !== 'string') return input;
+    const now = new Date();
+    const pad = (n) => String(n).padStart(2, '0');
+    input = input.replace(/\{\{timestamp\}\}/g, String(Date.now()));
+    input = input.replace(/\{\{date\}\}/g, `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`);
+    input = input.replace(/\{\{datetime\}\}/g, `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`);
+    input = input.replace(/\{\{time\}\}/g, `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`);
+    input = input.replace(/\{\{random\}\}/g, String(Math.random()));
+    input = input.replace(/\{\{randomInt:(\d+):(\d+)\}\}/g, (match, min, max) => {
+      const lo = parseInt(min), hi = parseInt(max);
+      if (isNaN(lo) || isNaN(hi) || lo > hi) return match;
+      return String(Math.floor(Math.random() * (hi - lo + 1)) + lo);
+    });
+    input = input.replace(/\{\{uuid\}\}/g, 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+      const r = Math.random() * 16 | 0; return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+    }));
+    input = input.replace(/\{\{loopIndex\}\}/g, String(this.loopIndex || 1));
+    input = input.replace(/\{\{loopIndex0\}\}/g, String(Math.max(0, (this.loopIndex || 1) - 1)));
+    return input;
+  }
+
+  async executeInput(operation) {
+    const element = this.findElement(operation.selector);
+    if (!element) throw new Error(`未找到元素: ${operation.selector}`);
+    element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    await this.sleep(200);
+    element.focus();
+    let value = operation.value || '';
+    value = this.substituteVariables(value);
+    if (element.tagName === 'INPUT' || element.tagName === 'TEXTAREA') { element.value = value; }
+    else if (element.isContentEditable) { element.textContent = value; }
+    else { element.value = value; }
+    this.dispatchInputEvents(element, value);
+    this.highlightElement(element, '#2196F3');
+  }
+
+  dispatchInputEvents(element, value) {
+    ['input', 'change'].forEach(eventType => {
+      element.dispatchEvent(new Event(eventType, { bubbles: true, cancelable: true }));
+    });
+    const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
+    if (nativeSetter) { nativeSetter.call(element, value); element.dispatchEvent(new Event('input', { bubbles: true })); }
+  }
+
+  async executeClick(operation) {
+    const element = this.findElement(operation.selector);
+    if (!element) throw new Error(`未找到元素: ${operation.selector}`);
+    element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    await this.sleep(300);
+    const rect = element.getBoundingClientRect();
+    this.dispatchClickEvents(element, rect.left + rect.width / 2, rect.top + rect.height / 2);
+    this.highlightElement(element, '#4CAF50');
+  }
+
+  dispatchClickEvents(element, clientX, clientY) {
+    const options = { bubbles: true, cancelable: true, view: window, clientX, clientY, screenX: clientX + window.screenX, screenY: clientY + window.screenY, detail: 1 };
+    const events = [new MouseEvent('mouseover', options), new MouseEvent('mousedown', options), new MouseEvent('focus', { bubbles: false }), new MouseEvent('mouseup', options), new MouseEvent('click', options)];
+    events.forEach(event => element.dispatchEvent(event));
+    if (typeof element.click === 'function') element.click();
+  }
+
+  async executeScroll(operation) {
+    window.scrollTo({ top: operation.position || 0, left: 0, behavior: operation.behavior || 'smooth' });
+    await this.sleep((operation.behavior || 'smooth') === 'smooth' ? 500 : 100);
+  }
+
+  async executeRefresh(operation) {
+    switch (operation.refreshType) {
+      case 'normal': window.location.reload(); break;
+      case 'hard': window.location.reload(true); break;
+      case 'waitElement':
+        if (operation.waitSelector) {
+          sessionStorage.setItem('__executor_wait_config__', JSON.stringify({ selector: operation.waitSelector, timeout: operation.waitTimeout || 5000, timestamp: Date.now() }));
+        }
+        window.location.reload(); break;
+      default: window.location.reload();
+    }
+  }
+
+  async executeWait(operation) {
+    const waitType = operation.waitType || 'fixed';
+    switch (waitType) {
+      case 'fixed': await this.sleep(parseInt(operation.waitDuration) || 1000); break;
+      case 'element':
+        if (!operation.waitSelector) throw new Error('等待元素操作缺少选择器');
+        await this.waitForElement(this.substituteVariables(operation.waitSelector), parseInt(operation.waitTimeout) || 10000); break;
+      case 'elementVisible':
+        if (!operation.waitSelector) throw new Error('等待元素操作缺少选择器');
+        await this.waitForElementVisible(this.substituteVariables(operation.waitSelector), parseInt(operation.waitTimeout) || 10000); break;
+      case 'elementDisappear':
+        if (!operation.waitSelector) throw new Error('等待元素消失操作缺少选择器');
+        await this.waitForElementDisappear(this.substituteVariables(operation.waitSelector), parseInt(operation.waitTimeout) || 10000); break;
+      default: await this.sleep(parseInt(operation.waitDuration) || 1000);
+    }
+  }
+
+  async executeSelect(operation) {
+    const element = this.findElement(operation.selector);
+    if (!element) throw new Error(`未找到下拉元素: ${operation.selector}`);
+    if (element.tagName !== 'SELECT') throw new Error(`目标元素不是 <select> 下拉框: ${element.tagName}`);
+    element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    await this.sleep(200);
+    const selectType = operation.selectType || 'value';
+    let targetValue = this.substituteVariables(operation.selectValue || '');
+    let matched = false;
+    switch (selectType) {
+      case 'value':
+        for (let i = 0; i < element.options.length; i++) {
+          if (element.options[i].value === targetValue) { element.selectedIndex = i; matched = true; break; }
+        }
+        if (!matched) { const idx = parseInt(targetValue); if (!isNaN(idx) && idx >= 0 && idx < element.options.length) { element.selectedIndex = idx; matched = true; } }
+        break;
+      case 'index': { const idx = parseInt(targetValue); if (!isNaN(idx) && idx >= 0 && idx < element.options.length) { element.selectedIndex = idx; matched = true; } break; }
+      case 'text':
+        for (let i = 0; i < element.options.length; i++) {
+          const txt = element.options[i].textContent.trim();
+          if (txt === targetValue || txt.includes(targetValue)) { element.selectedIndex = i; matched = true; break; }
+        } break;
+    }
+    if (!matched) throw new Error(`在下拉框中未找到匹配项: ${targetValue} (方式: ${selectType})`);
+    element.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
+    element.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
+    this.highlightElement(element, '#FF9800');
+  }
+
+  async executeScript(operation) {
+    const scriptCode = operation.scriptCode || '';
+    if (!scriptCode.trim()) throw new Error('脚本内容为空');
+    const processedScript = this.substituteVariables(scriptCode);
+    try {
+      const context = { loopIndex: this.loopIndex || 1, document: document, window: window, selector: operation.selector || '', findElement: (sel) => this.findElement(sel), sleep: (ms) => this.sleep(ms) };
+      const fn = new Function('context', `with(context) { ${processedScript} }`);
+      const result = fn(context);
+      console.log('✅ 脚本执行完成', result !== undefined ? `结果: ${result}` : '');
+      if (result !== undefined && result !== null) {
+        chrome.runtime.sendMessage({ action: 'scriptResult', result: String(result), operationId: operation.id });
+      }
+    } catch (error) { throw new Error(`脚本执行错误: ${error.message}`); }
+  }
+
+  async executeExtract(operation) {
+    const element = this.findElement(operation.selector);
+    if (!element) throw new Error(`未找到元素: ${operation.selector}`);
+    element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    await this.sleep(200);
+    const extractType = operation.extractType || 'text';
+    let extractedValue = '';
+    switch (extractType) {
+      case 'text': extractedValue = element.textContent?.trim() || ''; break;
+      case 'innerHtml': extractedValue = element.innerHTML || ''; break;
+      case 'outerHtml': extractedValue = element.outerHTML || ''; break;
+      case 'value': extractedValue = element.value || ''; break;
+      case 'attribute': extractedValue = element.getAttribute(operation.extractAttribute || 'class') || ''; break;
+      case 'href': extractedValue = element.href || element.getAttribute('href') || ''; break;
+      case 'src': extractedValue = element.src || element.getAttribute('src') || ''; break;
+      default: extractedValue = element.textContent?.trim() || '';
+    }
+    console.log(`✅ 提取成功 (${extractType}): ${extractedValue.substring(0, 200)}`);
+    this.highlightElement(element, '#9C27B0');
+    chrome.runtime.sendMessage({ action: 'extractResult', value: extractedValue, extractType, selector: operation.selector, operationId: operation.id });
+  }
+
+  async executeKeyboard(operation) {
+    const keyValue = this.substituteVariables(operation.keyValue || 'Enter');
+    const modifierKeys = operation.modifierKeys || [];
+    if (operation.keyType === 'sequence') {
+      const keys = keyValue.split(/\s+/).filter(k => k);
+      for (const key of keys) { if (this.shouldStop) throw new Error('用户停止执行'); await this.pressKey(key, modifierKeys); await this.sleep(50); }
+    } else { await this.pressKey(keyValue, modifierKeys); }
+  }
+
+  async pressKey(keyValue, modifierKeys = []) {
+    const key = this.normalizeKey(keyValue);
+    const modifiers = [];
+    if (modifierKeys.includes('ctrl')) modifiers.push('ctrlKey');
+    if (modifierKeys.includes('shift')) modifiers.push('shiftKey');
+    if (modifierKeys.includes('alt')) modifiers.push('altKey');
+    const options = { key, code: this.getEventCode(key), bubbles: true, cancelable: true };
+    if (modifiers.length > 0) options.modifiers = modifiers;
+    document.activeElement.dispatchEvent(new KeyboardEvent('keydown', options));
+    document.activeElement.dispatchEvent(new KeyboardEvent('keyup', { ...options }));
+    console.log(`⌨️ 按键: ${key}`);
+  }
+
+  normalizeKey(key) {
+    const map = { 'enter':'Enter','tab':'Tab','escape':'Escape','esc':'Escape','backspace':'Backspace','delete':'Delete','arrowup':'ArrowUp','arrowdown':'ArrowDown','arrowleft':'ArrowLeft','arrowright':'ArrowRight','home':'Home','end':'End','pageup':'PageUp','pagedown':'PageDown',' ':'Space' };
+    return map[key.toLowerCase()] || key;
+  }
+
+  getEventCode(key) {
+    const map = { 'Enter':'Enter','Tab':'Tab','Escape':'Escape','Backspace':'Backspace','Delete':'Delete','ArrowUp':'ArrowUp','ArrowDown':'ArrowDown','ArrowLeft':'ArrowLeft','ArrowRight':'ArrowRight','Home':'Home','End':'End','PageUp':'PageUp','PageDown':'PageDown',' ':'Space' };
+    if (map[key]) return map[key];
+    if (key.length === 1) return `Key${key.toUpperCase()}`;
+    return key;
+  }
+
+  async executeScreenshot(operation) {
+    const screenshotType = operation.screenshotType || 'page';
+    return new Promise((resolve, reject) => {
+      chrome.runtime.sendMessage({ action: 'captureScreenshot' }, (response) => {
+        if (response && response.success) {
+          chrome.runtime.sendMessage({ action: 'screenshotResult', dataUrl: response.dataUrl, type: screenshotType });
+          console.log(`📷 截屏完成 (${screenshotType})`); resolve();
+        } else { reject(new Error(response?.error || '截屏失败')); }
+      });
+    });
+  }
+
+  async executeClipboard(operation) {
+    const action = operation.clipboardAction || 'write';
+    if (action === 'write') {
+      const value = this.substituteVariables(operation.clipboardValue || '');
+      await navigator.clipboard.writeText(value);
+      if (operation.clipboardVariable) chrome.runtime.sendMessage({ action: 'storeData', key: operation.clipboardVariable, value });
+      console.log(`📋 已写入剪贴板: ${value.substring(0, 30)}...`);
+    } else {
+      const text = await navigator.clipboard.readText();
+      const varName = operation.clipboardVariable || 'clipboardContent';
+      chrome.runtime.sendMessage({ action: 'storeData', key: varName, value: text });
+      console.log(`📋 已读取剪贴板: ${text.substring(0, 30)}...`);
+    }
+  }
+
+  async executeHttpRequest(operation) {
+    const method = (operation.httpMethod || 'GET').toUpperCase();
+    const url = this.substituteVariables(operation.httpUrl || '');
+    if (!url) throw new Error('HTTP请求URL为空');
+    const headers = {};
+    if (operation.httpHeaders) {
+      try {
+        const lines = operation.httpHeaders.split('\n').filter(l => l.trim());
+        for (const line of lines) { const idx = line.indexOf(':'); if (idx > 0) { headers[line.substring(0, idx).trim()] = line.substring(idx + 1).trim(); } }
+      } catch (e) { /* ignore */ }
+    }
+    const fetchOptions = { method, headers };
+    if (operation.httpBody && method !== 'GET') fetchOptions.body = this.substituteVariables(operation.httpBody);
+    try {
+      const response = await fetch(url, fetchOptions);
+      const text = await response.text();
+      const preview = text.substring(0, 200);
+      console.log(`🌐 HTTP ${method} ${url} -> ${response.status} (${preview}...)`);
+      chrome.runtime.sendMessage({ action: 'httpRequestResult', url, status: response.status, preview });
+      if (operation.httpSaveVariable) chrome.runtime.sendMessage({ action: 'storeData', key: operation.httpSaveVariable, value: text });
+      this.highlightElement(document.body, '#00BCD4');
+    } catch (error) { throw new Error(`HTTP请求失败: ${error.message}`); }
+  }
+
+  async executeTab(operation) {
+    const tabAction = operation.tabAction || 'open';
+    switch (tabAction) {
+      case 'open': { const url = this.substituteVariables(operation.tabUrl || ''); if (!url) throw new Error('标签页URL为空'); chrome.runtime.sendMessage({ action: 'openTab', url }); console.log(`🗂 打开新标签页: ${url}`); break; }
+      case 'close': chrome.runtime.sendMessage({ action: 'closeCurrentTab' }); console.log('🗂 关闭当前标签页'); break;
+      case 'reload': window.location.reload(); console.log('🗂 重载标签页'); break;
+      case 'focus': window.focus(); console.log('🗂 聚焦标签页'); break;
+      default: throw new Error(`未知标签页操作: ${tabAction}`);
+    }
+  }
+
+  async executeNotification(operation) {
+    const title = this.substituteVariables(operation.notifTitle || '网页操作执行器');
+    const body = this.substituteVariables(operation.notifBody || '');
+    const duration = parseInt(operation.notifDuration) || 3000;
+    if ('Notification' in window) {
+      if (Notification.permission === 'granted') {
+        const notif = new Notification(title, { body, icon: chrome.runtime.getURL('icons/icon128.png') });
+        setTimeout(() => notif.close(), duration); console.log(`🔔 通知: ${title} - ${body}`);
+      } else if (Notification.permission !== 'denied') {
+        const permission = await Notification.requestPermission();
+        if (permission === 'granted') { const notif = new Notification(title, { body }); setTimeout(() => notif.close(), duration); console.log(`🔔 通知: ${title} - ${body}`); }
+        else throw new Error('通知权限被拒绝');
+      } else this.showInPageNotification(title, body, duration);
+    } else this.showInPageNotification(title, body, duration);
+  }
+
+  showInPageNotification(title, body, duration) {
+    const notif = document.createElement('div');
+    notif.className = '__executor_notif__';
+    notif.style.cssText = 'position: fixed; top: 20px; right: 20px; z-index: 2147483647; background: #333; color: white; padding: 12px 20px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.3); font-family: -apple-system, sans-serif; max-width: 300px;';
+    notif.innerHTML = `<div style="font-weight:600;margin-bottom:4px">${title}</div><div style="font-size:13px;opacity:0.9">${body}</div>`;
+    document.body.appendChild(notif);
+    setTimeout(() => { notif.style.opacity = '0'; notif.style.transition = 'opacity 0.3s'; setTimeout(() => notif.remove(), 300); }, duration);
+  }
+
+  async executeCookie(operation) {
+    const cookieAction = operation.cookieAction || 'get';
+    switch (cookieAction) {
+      case 'set': {
+        const name = this.substituteVariables(operation.cookieName || '');
+        const value = this.substituteVariables(operation.cookieValue || '');
+        if (!name) throw new Error('Cookie名称为空');
+        let cookieStr = `${encodeURIComponent(name)}=${encodeURIComponent(value)}`;
+        if (operation.cookieDomain) cookieStr += `; domain=${operation.cookieDomain}`;
+        if (operation.cookiePath) cookieStr += `; path=${operation.cookiePath}`;
+        if (operation.cookieMaxAge) cookieStr += `; max-age=${operation.cookieMaxAge}`;
+        document.cookie = cookieStr;
+        console.log(`🍪 设置Cookie: ${name}=${value}`); break;
+      }
+      case 'get': {
+        const name = this.substituteVariables(operation.cookieName || '');
+        if (!name) throw new Error('Cookie名称为空');
+        const cookies = document.cookie.split(';').reduce((acc, c) => { const [k, v] = c.trim().split('='); acc[decodeURIComponent(k)] = decodeURIComponent(v || ''); return acc; }, {});
+        const value = cookies[name] || '';
+        console.log(`🍪 获取Cookie: ${name}=${value}`);
+        if (operation.cookieVariable) chrome.runtime.sendMessage({ action: 'storeData', key: operation.cookieVariable, value });
+        break;
+      }
+      case 'delete': {
+        const name = this.substituteVariables(operation.cookieName || '');
+        if (!name) throw new Error('Cookie名称为空');
+        document.cookie = `${encodeURIComponent(name)}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/`;
+        console.log(`🍪 删除Cookie: ${name}`); break;
+      }
+    }
+  }
+
+  async executeHover(operation) {
+    const element = this.findElement(operation.selector);
+    if (!element) throw new Error(`未找到元素: ${operation.selector}`);
+    element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    await this.sleep(300);
+    const rect = element.getBoundingClientRect();
+    const centerX = rect.left + rect.width / 2, centerY = rect.top + rect.height / 2;
+    element.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, cancelable: true, view: window, clientX: centerX, clientY: centerY }));
+    element.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true, cancelable: true, view: window, clientX: centerX, clientY: centerY }));
+    await this.sleep(parseInt(operation.hoverDuration) || 1000);
+    element.dispatchEvent(new MouseEvent('mouseout', { bubbles: true, cancelable: true, view: window, clientX: centerX, clientY: centerY }));
+    element.dispatchEvent(new MouseEvent('mouseleave', { bubbles: true, cancelable: true, view: window, clientX: centerX, clientY: centerY }));
+    this.highlightElement(element, '#FF5722');
+    console.log(`🖱 悬停: ${operation.selector} (${operation.hoverDuration || 1000}ms)`);
+  }
+
+  async executeDoubleClick(operation) {
+    const element = this.findElement(operation.selector);
+    if (!element) throw new Error(`未找到元素: ${operation.selector}`);
+    element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    await this.sleep(300);
+    const rect = element.getBoundingClientRect();
+    const centerX = rect.left + rect.width / 2, centerY = rect.top + rect.height / 2;
+    const opts = { bubbles: true, cancelable: true, view: window, clientX: centerX, clientY: centerY, detail: 2 };
+    element.dispatchEvent(new MouseEvent('mouseover', { ...opts, detail: 1 }));
+    element.dispatchEvent(new MouseEvent('mousedown', { ...opts, detail: 1 }));
+    element.dispatchEvent(new MouseEvent('mouseup', { ...opts, detail: 1 }));
+    element.dispatchEvent(new MouseEvent('click', { ...opts, detail: 1 }));
+    element.dispatchEvent(new MouseEvent('mousedown', { ...opts, detail: 2 }));
+    element.dispatchEvent(new MouseEvent('mouseup', { ...opts, detail: 2 }));
+    element.dispatchEvent(new MouseEvent('click', { ...opts, detail: 2 }));
+    element.dispatchEvent(new MouseEvent('dblclick', opts));
+    this.highlightElement(element, '#E91E63');
+    console.log(`🖱 双击: ${operation.selector}`);
+  }
+
+  async executeDrag(operation) {
+    const sourceSelector = this.substituteVariables(operation.sourceSelector || '');
+    const targetSelector = this.substituteVariables(operation.targetSelector || '');
+    if (!sourceSelector) throw new Error('拖拽源选择器为空');
+    if (!targetSelector) throw new Error('拖拽目标选择器为空');
+    const sourceEl = this.findElement(sourceSelector);
+    const targetEl = this.findElement(targetSelector);
+    if (!sourceEl) throw new Error(`未找到拖拽源元素: ${sourceSelector}`);
+    if (!targetEl) throw new Error(`未找到拖拽目标元素: ${targetSelector}`);
+    sourceEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    await this.sleep(300);
+    const srcRect = sourceEl.getBoundingClientRect(), tgtRect = targetEl.getBoundingClientRect();
+    const srcX = srcRect.left + srcRect.width / 2, srcY = srcRect.top + srcRect.height / 2;
+    const tgtX = tgtRect.left + tgtRect.width / 2, tgtY = tgtRect.top + tgtRect.height / 2;
+    const dataTransfer = new DataTransfer();
+    const dragStartOpts = { bubbles: true, cancelable: true, view: window, clientX: srcX, clientY: srcY, dataTransfer };
+    sourceEl.dispatchEvent(new DragEvent('dragstart', dragStartOpts));
+    sourceEl.dispatchEvent(new DragEvent('drag', { ...dragStartOpts, clientX: srcX, clientY: srcY }));
+    targetEl.dispatchEvent(new DragEvent('dragenter', { ...dragStartOpts, clientX: tgtX, clientY: tgtY }));
+    targetEl.dispatchEvent(new DragEvent('dragover', { ...dragStartOpts, clientX: tgtX, clientY: tgtY }));
+    targetEl.dispatchEvent(new DragEvent('drop', { ...dragStartOpts, clientX: tgtX, clientY: tgtY }));
+    sourceEl.dispatchEvent(new DragEvent('dragend', { ...dragStartOpts, clientX: tgtX, clientY: tgtY }));
+    const mouseOpts = { bubbles: true, cancelable: true, view: window };
+    sourceEl.dispatchEvent(new MouseEvent('mousedown', { ...mouseOpts, clientX: srcX, clientY: srcY }));
+    targetEl.dispatchEvent(new MouseEvent('mousemove', { ...mouseOpts, clientX: tgtX, clientY: tgtY }));
+    targetEl.dispatchEvent(new MouseEvent('mouseup', { ...mouseOpts, clientX: tgtX, clientY: tgtY }));
+    this.highlightElement(sourceEl, '#795548');
+    this.highlightElement(targetEl, '#795548');
+    console.log(`🔀 拖拽: ${sourceSelector} -> ${targetSelector}`);
+  }
+
+  async executeRightClick(operation) {
+    const element = this.findElement(operation.selector);
+    if (!element) throw new Error(`未找到元素: ${operation.selector}`);
+    element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    await this.sleep(300);
+    const rect = element.getBoundingClientRect();
+    const centerX = rect.left + rect.width / 2, centerY = rect.top + rect.height / 2;
+    const opts = { bubbles: true, cancelable: true, view: window, clientX: centerX, clientY: centerY, button: 2, buttons: 2 };
+    element.dispatchEvent(new MouseEvent('mouseover', { ...opts, button: 0, buttons: 0 }));
+    element.dispatchEvent(new MouseEvent('mousedown', opts));
+    element.dispatchEvent(new MouseEvent('contextmenu', opts));
+    element.dispatchEvent(new MouseEvent('mouseup', opts));
+    this.highlightElement(element, '#673AB7');
+    console.log(`🖱 右键点击: ${operation.selector}`);
+  }
+
+  async executeFileUpload(operation) {
+    const element = this.findElement(operation.selector);
+    if (!element) throw new Error(`未找到元素: ${operation.selector}`);
+    if (element.tagName !== 'INPUT' || element.type.toLowerCase() !== 'file') throw new Error('文件上传目标必须是 <input type="file"> 元素');
+    const filePaths = (operation.filePaths || '').split('\n').map(p => p.trim()).filter(p => p);
+    if (filePaths.length === 0) throw new Error('文件路径为空');
+    element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    await this.sleep(200);
+    const files = filePaths.map(path => { const name = path.split(/[\\/]/).pop() || path; return new File([new Blob([`placeholder for ${path}`])], name); });
+    const dataTransfer = new DataTransfer();
+    files.forEach(f => dataTransfer.items.add(f));
+    element.files = dataTransfer.files;
+    element.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
+    element.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
+    this.highlightElement(element, '#4CAF50');
+    console.log(`📁 文件上传: ${filePaths.length} 个文件`);
+  }
+
+  checkRefreshWait() {
+    try {
+      const configStr = sessionStorage.getItem('__executor_wait_config__');
+      if (configStr) {
+        const config = JSON.parse(configStr);
+        sessionStorage.removeItem('__executor_wait_config__');
+        if (Date.now() - config.timestamp < config.timeout + 5000) {
+          console.log(`⏳ 等待元素: ${config.selector}`);
+          this.waitForElement(config.selector, config.timeout)
+            .then(element => { console.log('✅ 等待的元素已出现'); this.highlightElement(element, '#FF9800'); })
+            .catch(error => { console.warn('⚠️ 等待元素超时:', error.message); });
+        }
+      }
+    } catch (error) { /* ignore */ }
+  }
+
+  async waitForElement(selector, timeout = 5000) {
+    const startTime = Date.now();
+    return new Promise((resolve, reject) => {
+      const check = () => {
+        if (this.shouldStop) { reject(new Error('用户停止执行')); return; }
+        const element = this.findElement(selector);
+        if (element) { resolve(element); return; }
+        if (Date.now() - startTime > timeout) { reject(new Error(`等待元素超时 (${timeout}ms): ${selector}`)); return; }
+        setTimeout(check, 200);
+      };
+      check();
+    });
+  }
+
+  async waitForElementVisible(selector, timeout = 10000) {
+    const startTime = Date.now();
+    return new Promise((resolve, reject) => {
+      const check = () => {
+        if (this.shouldStop) { reject(new Error('用户停止执行')); return; }
+        const element = this.findElement(selector);
+        if (element && this.isElementVisible(element)) { resolve(element); return; }
+        if (Date.now() - startTime > timeout) { reject(new Error(`等待元素可见超时 (${timeout}ms): ${selector}`)); return; }
+        setTimeout(check, 200);
+      };
+      check();
+    });
+  }
+
+  async waitForElementDisappear(selector, timeout = 10000) {
+    const startTime = Date.now();
+    return new Promise((resolve, reject) => {
+      const check = () => {
+        if (this.shouldStop) { reject(new Error('用户停止执行')); return; }
+        const element = this.findElement(selector);
+        if (!element || !this.isElementVisible(element)) { resolve(true); return; }
+        if (Date.now() - startTime > timeout) { reject(new Error(`等待元素消失超时 (${timeout}ms): ${selector}`)); return; }
+        setTimeout(check, 200);
+      };
+      check();
+    });
+  }
+
+  checkConditionMet(conditionType, selector) {
+    if (!selector) return false;
+    const element = this.findElement(selector);
+    switch (conditionType) {
+      case 'elementExists': return !!element && this.isElementVisible(element);
+      case 'elementDisappears': return !element || !this.isElementVisible(element);
+      default: return false;
+    }
+  }
+
+  findElement(selector) {
+    if (!selector) return document.body;
+    try {
+      let element = document.querySelector(selector);
+      if (element) return element;
+      const xpathResult = document.evaluate(selector, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+      return xpathResult.singleNodeValue;
+    } catch (error) { console.error('选择器错误:', error.message); return null; }
+  }
+
+  isElementVisible(element) {
+    if (!element) return false;
+    const style = window.getComputedStyle(element);
+    const rect = element.getBoundingClientRect();
+    return style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0' && rect.width > 0 && rect.height > 0;
+  }
+
+  highlightElement(element, color = '#4CAF50') {
+    const origOutline = element.style.outline;
+    const origBg = element.style.backgroundColor;
+    const origTransition = element.style.transition;
+    element.style.outline = `3px solid ${color}`;
+    element.style.backgroundColor = `${color}15`;
+    element.style.transition = 'all 0.3s ease';
+    setTimeout(() => { element.style.outline = origOutline; element.style.backgroundColor = origBg; element.style.transition = origTransition; }, 2000);
+  }
+
+  sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
+}
+
+const executor = new OperationExecutor();
+if (document.readyState === 'complete') { executor.checkRefreshWait(); }
+else { window.addEventListener('load', () => executor.checkRefreshWait()); }
