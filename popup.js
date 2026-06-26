@@ -1,6 +1,6 @@
 /**
- * 网页操作执行器 - 弹出窗口脚本 v1.8.0
- * 新增: 搜索过滤、暗色模式、导出JS、批量操作
+ * 网页操作执行器 - 弹出窗口脚本 v1.9.0
+ * 新增: 操作启用/禁用、操作验证、搜索过滤、暗色模式、导出JS、批量操作
  */
 
 class OperationManager {
@@ -17,11 +17,15 @@ class OperationManager {
     this.darkMode = false;
     this.batchMode = false;
     this.selectedOperations = new Set();
+    this.validationErrors = [];
+    this.groups = []; // 操作分组
+    this.collapsedGroups = new Set(); // 折叠的分组
     this.init();
   }
 
   async init() {
     await this.loadOperations();
+    await this.loadGroups();
     await this.loadRepeatSettings();
     await this.loadLogs();
     await this.loadDarkMode();
@@ -49,6 +53,102 @@ class OperationManager {
     } catch (error) {
       console.error('保存操作失败:', error);
     }
+  }
+
+  async loadGroups() {
+    try {
+      const result = await chrome.storage.local.get(['groups', 'collapsedGroups']);
+      this.groups = result.groups || [];
+      this.collapsedGroups = new Set(result.collapsedGroups || []);
+    } catch (error) {
+      console.error('加载分组失败:', error);
+      this.groups = [];
+      this.collapsedGroups = new Set();
+    }
+  }
+
+  async saveGroups() {
+    try {
+      await chrome.storage.local.set({
+        groups: this.groups,
+        collapsedGroups: Array.from(this.collapsedGroups)
+      });
+    } catch (error) {
+      console.error('保存分组失败:', error);
+    }
+  }
+
+  createGroup(name) {
+    const group = {
+      id: Date.now() + Math.floor(Math.random() * 1000),
+      name: name || `分组 ${this.groups.length + 1}`,
+      operationIds: [],
+      createdAt: Date.now()
+    };
+    this.groups.push(group);
+    this.saveGroups();
+    this.renderOperations();
+    this.showStatus('✅ 分组已创建', 'success');
+    return group;
+  }
+
+  deleteGroup(groupId) {
+    if (!confirm('确定要删除这个分组吗？分组内的操作将变为未分组状态。')) {
+      return;
+    }
+    this.groups = this.groups.filter(g => g.id !== groupId);
+    this.collapsedGroups.delete(groupId);
+    this.saveGroups();
+    this.renderOperations();
+    this.showStatus('✅ 分组已删除', 'success');
+  }
+
+  renameGroup(groupId, newName) {
+    const group = this.groups.find(g => g.id === groupId);
+    if (group) {
+      group.name = newName;
+      this.saveGroups();
+      this.renderOperations();
+    }
+  }
+
+  toggleGroupCollapse(groupId) {
+    if (this.collapsedGroups.has(groupId)) {
+      this.collapsedGroups.delete(groupId);
+    } else {
+      this.collapsedGroups.add(groupId);
+    }
+    this.saveGroups();
+    this.renderOperations();
+  }
+
+  addOperationToGroup(operationId, groupId) {
+    const group = this.groups.find(g => g.id === groupId);
+    if (!group) return;
+    
+    // Remove from other groups first
+    this.groups.forEach(g => {
+      g.operationIds = g.operationIds.filter(id => id !== operationId);
+    });
+    
+    // Add to target group
+    if (!group.operationIds.includes(operationId)) {
+      group.operationIds.push(operationId);
+      this.saveGroups();
+      this.renderOperations();
+    }
+  }
+
+  removeOperationFromGroup(operationId) {
+    this.groups.forEach(g => {
+      g.operationIds = g.operationIds.filter(id => id !== operationId);
+    });
+    this.saveGroups();
+    this.renderOperations();
+  }
+
+  getOperationGroup(operationId) {
+    return this.groups.find(g => g.operationIds.includes(operationId));
   }
 
   async loadRepeatSettings() {
@@ -268,6 +368,25 @@ class OperationManager {
       document.getElementById('batchBar').style.display = 'none';
       document.getElementById('selectAll').checked = false;
       this.renderOperations();
+    });
+
+    // 分组管理
+    document.getElementById('manageGroups').addEventListener('click', () => {
+      this.showGroupDialog();
+    });
+
+    document.getElementById('closeGroupDialog').addEventListener('click', () => {
+      this.hideGroupDialog();
+    });
+
+    document.getElementById('createGroup').addEventListener('click', () => {
+      const input = document.getElementById('newGroupName');
+      const name = input.value.trim();
+      if (name) {
+        this.createGroup(name);
+        input.value = '';
+        this.renderGroupList();
+      }
     });
 
     // 导出为JS
@@ -553,6 +672,150 @@ class OperationManager {
     this.renderOperations();
   }
 
+  toggleOperationEnabled(id) {
+    const op = this.operations.find(o => o.id === id);
+    if (!op) return;
+    op.enabled = op.enabled === false ? true : false;
+    this.saveOperations();
+    this.renderOperations();
+    this.showStatus(op.enabled ? '✅ 操作已启用' : '⏸️ 操作已禁用', 'success');
+  }
+
+  validateOperations() {
+    this.validationErrors = [];
+    
+    this.operations.forEach((op, index) => {
+      const opNum = index + 1;
+      const opDesc = op.description || op.type;
+      
+      // 检查启用的操作
+      if (op.enabled !== false) {
+        // 检查必填字段
+        if (!op.type) {
+          this.validationErrors.push({ index: opNum, message: `操作 ${opNum} (${opDesc}): 缺少操作类型` });
+        }
+        
+        // 根据操作类型检查特定字段
+        switch (op.type) {
+          case 'input':
+          case 'click':
+          case 'hover':
+          case 'doubleClick':
+          case 'rightClick':
+          case 'extract':
+          case 'fileUpload':
+            if (!op.selector || op.selector.trim() === '') {
+              this.validationErrors.push({ index: opNum, message: `操作 ${opNum} (${opDesc}): 缺少选择器` });
+            }
+            if (op.type === 'input' && (!op.value && op.value !== 0)) {
+              this.validationErrors.push({ index: opNum, message: `操作 ${opNum} (${opDesc}): 缺少输入值` });
+            }
+            if (op.type === 'fileUpload' && (!op.filePaths || op.filePaths.trim() === '')) {
+              this.validationErrors.push({ index: opNum, message: `操作 ${opNum} (${opDesc}): 缺少文件路径` });
+            }
+            break;
+            
+          case 'drag':
+            if (!op.sourceSelector || op.sourceSelector.trim() === '') {
+              this.validationErrors.push({ index: opNum, message: `操作 ${opNum} (${opDesc}): 缺少源选择器` });
+            }
+            if (!op.targetSelector || op.targetSelector.trim() === '') {
+              this.validationErrors.push({ index: opNum, message: `操作 ${opNum} (${opDesc}): 缺少目标选择器` });
+            }
+            break;
+            
+          case 'wait':
+            if (op.waitType === 'element' || op.waitType === 'elementVisible' || op.waitType === 'elementDisappear') {
+              if (!op.waitSelector || op.waitSelector.trim() === '') {
+                this.validationErrors.push({ index: opNum, message: `操作 ${opNum} (${opDesc}): 缺少等待元素选择器` });
+              }
+            }
+            if (op.waitType === 'fixed' && (!op.waitDuration || op.waitDuration <= 0)) {
+              this.validationErrors.push({ index: opNum, message: `操作 ${opNum} (${opDesc}): 等待时长必须大于0` });
+            }
+            break;
+            
+          case 'refresh':
+            if (op.refreshType === 'waitElement' && (!op.waitSelector || op.waitSelector.trim() === '')) {
+              this.validationErrors.push({ index: opNum, message: `操作 ${opNum} (${opDesc}): 缺少等待元素选择器` });
+            }
+            break;
+            
+          case 'select':
+            if (!op.selector || op.selector.trim() === '') {
+              this.validationErrors.push({ index: opNum, message: `操作 ${opNum} (${opDesc}): 缺少选择器` });
+            }
+            if (!op.selectValue && op.selectValue !== 0) {
+              this.validationErrors.push({ index: opNum, message: `操作 ${opNum} (${opDesc}): 缺少选择值` });
+            }
+            break;
+            
+          case 'script':
+            if (!op.scriptCode || op.scriptCode.trim() === '') {
+              this.validationErrors.push({ index: opNum, message: `操作 ${opNum} (${opDesc}): 缺少脚本代码` });
+            }
+            break;
+            
+          case 'httpRequest':
+            if (!op.httpUrl || op.httpUrl.trim() === '') {
+              this.validationErrors.push({ index: opNum, message: `操作 ${opNum} (${opDesc}): 缺少URL` });
+            }
+            break;
+            
+          case 'tab':
+            if (op.tabAction === 'open' && (!op.tabUrl || op.tabUrl.trim() === '')) {
+              this.validationErrors.push({ index: opNum, message: `操作 ${opNum} (${opDesc}): 缺少标签页URL` });
+            }
+            break;
+            
+          case 'notification':
+            if (!op.notifTitle || op.notifTitle.trim() === '') {
+              this.validationErrors.push({ index: opNum, message: `操作 ${opNum} (${opDesc}): 缺少通知标题` });
+            }
+            break;
+            
+          case 'cookie':
+            if (!op.cookieName || op.cookieName.trim() === '') {
+              this.validationErrors.push({ index: opNum, message: `操作 ${opNum} (${opDesc}): 缺少Cookie名称` });
+            }
+            if (op.cookieAction === 'set' && (!op.cookieValue && op.cookieValue !== 0)) {
+              this.validationErrors.push({ index: opNum, message: `操作 ${opNum} (${opDesc}): 缺少Cookie值` });
+            }
+            break;
+            
+          case 'keyboard':
+            if (!op.keyValue || op.keyValue.trim() === '') {
+              this.validationErrors.push({ index: opNum, message: `操作 ${opNum} (${opDesc}): 缺少按键值` });
+            }
+            break;
+        }
+        
+        // 检查延迟时间
+        if (op.delay !== undefined && op.delay < 0) {
+          this.validationErrors.push({ index: opNum, message: `操作 ${opNum} (${opDesc}): 延迟时间不能为负数` });
+        }
+      }
+    });
+    
+    return this.validationErrors;
+  }
+
+  showValidationResults() {
+    const errors = this.validateOperations();
+    
+    if (errors.length === 0) {
+      this.showStatus('✅ 所有操作验证通过', 'success');
+      this.addLog('success', '操作验证通过，共 ' + this.operations.filter(op => op.enabled !== false).length + ' 个启用操作');
+    } else {
+      const errorMsg = errors.map(e => e.message).join('\n');
+      this.showStatus(`⚠️ 发现 ${errors.length} 个配置错误`, 'error');
+      this.addLog('error', `验证失败:\n${errorMsg}`);
+      
+      // 显示详细错误
+      alert(`发现 ${errors.length} 个配置错误:\n\n${errorMsg}`);
+    }
+  }
+
   moveOperation(id, direction) {
     const index = this.operations.findIndex(op => op.id === id);
     if (index === -1) return;
@@ -735,14 +998,34 @@ class OperationManager {
   // ==================== 执行引擎 ====================
 
   async executeAllOperations() {
-    if (this.operations.length === 0) {
-      this.showStatus('⚠️ 请先添加操作', 'warning');
+    // 过滤出启用的操作
+    const enabledOperations = this.operations.filter(op => op.enabled !== false);
+    
+    if (enabledOperations.length === 0) {
+      this.showStatus('⚠️ 没有启用的操作', 'warning');
       return;
     }
 
     if (this.isExecuting) {
       this.showStatus('正在执行中...', 'warning');
       return;
+    }
+
+    // 执行前验证
+    const errors = this.validateOperations();
+    if (errors.length > 0) {
+      const enabledErrors = errors.filter(e => {
+        const op = this.operations[e.index - 1];
+        return op && op.enabled !== false;
+      });
+      
+      if (enabledErrors.length > 0) {
+        const errorMsg = enabledErrors.map(e => e.message).join('\n');
+        if (!confirm(`发现 ${enabledErrors.length} 个配置错误，是否仍要继续执行？\n\n${errorMsg}`)) {
+          return;
+        }
+        this.addLog('warning', `忽略 ${enabledErrors.length} 个验证错误继续执行`);
+      }
     }
 
     const enableRepeat = document.getElementById('enableRepeat').checked;
@@ -999,15 +1282,19 @@ class OperationManager {
       const originalIndex = this.operations.findIndex(o => o.id === op.id);
       const isSelected = this.selectedOperations.has(op.id);
       const batchCheckbox = this.batchMode ? `<input type="checkbox" class="batch-checkbox" data-id="${op.id}" ${isSelected ? 'checked' : ''}>` : '';
+      const isEnabled = op.enabled !== false;
+      const enabledIcon = isEnabled ? '👁' : '🚫';
+      const enabledTitle = isEnabled ? '禁用操作' : '启用操作';
 
       return `
-      <div class="operation-item ${isSelected ? 'selected' : ''}" draggable="${!this.batchMode}" data-id="${op.id}">
+      <div class="operation-item ${isSelected ? 'selected' : ''} ${!isEnabled ? 'disabled' : ''}" draggable="${!this.batchMode}" data-id="${op.id}">
         <div class="operation-header">
           ${batchCheckbox}
           <span class="operation-number">#${originalIndex + 1}</span>
           <span class="operation-type type-${op.type}">${this.getIcon(op.type)} ${op.description}</span>
           <div class="operation-controls">
             ${!this.batchMode ? `
+            <button class="btn-icon-only btn-enable" onclick="manager.toggleOperationEnabled(${op.id})" title="${enabledTitle}">${enabledIcon}</button>
             <button class="btn-icon-only" onclick="manager.moveOperation(${op.id}, 'up')" ${originalIndex === 0 ? 'disabled' : ''} title="上移">↑</button>
             <button class="btn-icon-only" onclick="manager.moveOperation(${op.id}, 'down')" ${originalIndex === this.operations.length - 1 ? 'disabled' : ''} title="下移">↓</button>
             <button class="btn-icon-only btn-copy" onclick="manager.copyOperation(${op.id})" title="复制">⧉</button>
@@ -1699,7 +1986,7 @@ class OperationManager {
   }
 
   showHelp() {
-    alert(`📖 使用帮助 v1.4.0
+    alert(`📖 使用帮助 v1.9.0
 
 【操作类型】
 📝 输入   - 填写表单内容 (支持变量)
@@ -1744,7 +2031,48 @@ Ctrl+Shift+S - 停止执行
 ⬇ 导出当前所有操作为 JSON
 ⬆ 从 JSON 文件导入操作配置
 
+【操作分组】
+📁 点击工具栏的分组按钮管理分组
+可以将操作分配到不同分组
+支持折叠/展开分组
+
 💡 如遇连接错误,请刷新页面后重试`);
+  }
+
+  // ==================== 分组管理对话框 ====================
+
+  showGroupDialog() {
+    document.getElementById('groupDialog').style.display = 'flex';
+    this.renderGroupList();
+  }
+
+  hideGroupDialog() {
+    document.getElementById('groupDialog').style.display = 'none';
+  }
+
+  renderGroupList() {
+    const container = document.getElementById('groupList');
+    
+    if (this.groups.length === 0) {
+      container.innerHTML = '<div class="empty-groups">暂无分组，请创建新分组</div>';
+      return;
+    }
+
+    container.innerHTML = this.groups.map(group => {
+      const opCount = group.operationIds.length;
+      return `
+        <div class="group-item" data-group-id="${group.id}">
+          <div class="group-info">
+            <input type="text" class="group-name-input" value="${this.escapeHtml(group.name)}" 
+                   onchange="manager.renameGroup(${group.id}, this.value)">
+            <span class="group-count">${opCount} 个操作</span>
+          </div>
+          <div class="group-actions-inline">
+            <button class="btn-icon-only btn-delete" onclick="manager.deleteGroup(${group.id})" title="删除分组">✕</button>
+          </div>
+        </div>
+      `;
+    }).join('');
   }
 }
 

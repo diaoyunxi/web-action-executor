@@ -1034,6 +1034,180 @@ body.dark-mode .log-container::-webkit-scrollbar-thumb:hover {
   background: #b0b0b0;
 }
 
+/* ==================== 分组管理对话框 v1.9.0 ==================== */
+
+.dialog-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.dialog {
+  background: white;
+  border-radius: 8px;
+  width: 90%;
+  max-width: 400px;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+}
+
+.dialog-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  border-bottom: 1px solid #e0e0e0;
+}
+
+.dialog-header h3 {
+  font-size: 16px;
+  margin: 0;
+  color: #333;
+}
+
+.dialog-content {
+  padding: 16px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.group-list {
+  margin-bottom: 16px;
+}
+
+.empty-groups {
+  text-align: center;
+  padding: 30px 20px;
+  color: #999;
+  font-size: 13px;
+}
+
+.group-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 12px;
+  background: #f8f9fa;
+  border: 1px solid #e0e0e0;
+  border-radius: 6px;
+  margin-bottom: 8px;
+  transition: all 0.2s;
+}
+
+.group-item:hover {
+  background: #f0f0f0;
+  border-color: #d0d0d0;
+}
+
+.group-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+}
+
+.group-name-input {
+  flex: 1;
+  padding: 6px 10px;
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+  font-size: 13px;
+  background: white;
+  transition: all 0.2s;
+}
+
+.group-name-input:focus {
+  outline: none;
+  border-color: #2196F3;
+  box-shadow: 0 0 0 2px rgba(33, 150, 243, 0.1);
+}
+
+.group-count {
+  font-size: 12px;
+  color: #666;
+  white-space: nowrap;
+}
+
+.group-actions-inline {
+  display: flex;
+  gap: 4px;
+}
+
+.group-actions {
+  display: flex;
+  gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid #e0e0e0;
+}
+
+.group-actions .group-name-input {
+  flex: 1;
+}
+
+.group-actions .btn {
+  white-space: nowrap;
+}
+
+/* 暗色模式下的分组对话框 */
+body.dark-mode .dialog {
+  background: #2d2d2d;
+  border-color: #424242;
+}
+
+body.dark-mode .dialog-header {
+  border-bottom-color: #424242;
+}
+
+body.dark-mode .dialog-header h3 {
+  color: #e0e0e0;
+}
+
+body.dark-mode .dialog-content {
+  background: #2d2d2d;
+}
+
+body.dark-mode .group-item {
+  background: #333;
+  border-color: #424242;
+}
+
+body.dark-mode .group-item:hover {
+  background: #3a3a3a;
+  border-color: #616161;
+}
+
+body.dark-mode .group-name-input {
+  background: #2d2d2d;
+  border-color: #424242;
+  color: #e0e0e0;
+}
+
+body.dark-mode .group-name-input:focus {
+  background: #333;
+  border-color: #2196F3;
+}
+
+body.dark-mode .group-count {
+  color: #b0b0b0;
+}
+
+body.dark-mode .group-actions {
+  border-top-color: #424242;
+}
+
+body.dark-mode .empty-groups {
+  color: #757575;
+}
+
 /* ==================== 元素拾取按钮 ==================== */
 
 .btn-picker {

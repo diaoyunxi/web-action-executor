@@ -10,7 +10,7 @@
   <div class="container">
     <div class="header">
       <h2>🎯 网页操作执行器</h2>
-      <span class="version">v1.8.0</span>
+      <span class="version">v1.9.0</span>
     </div>
 
     <!-- 工具栏 -->
@@ -19,8 +19,28 @@
         <input type="text" id="searchInput" placeholder="🔍 搜索操作..." class="search-input">
       </div>
       <div class="toolbar-actions">
+        <button id="manageGroups" class="btn-icon-only" title="管理分组">📁</button>
         <button id="toggleDarkMode" class="btn-icon-only" title="切换暗色模式">🌙</button>
         <button id="toggleBatchMode" class="btn-icon-only" title="批量选择">☑️</button>
+      </div>
+    </div>
+
+    <!-- 分组管理对话框 -->
+    <div id="groupDialog" class="dialog-overlay" style="display: none;">
+      <div class="dialog">
+        <div class="dialog-header">
+          <h3>📁 分组管理</h3>
+          <button id="closeGroupDialog" class="btn-icon-only">✕</button>
+        </div>
+        <div class="dialog-content">
+          <div class="group-list" id="groupList">
+            <!-- 动态生成 -->
+          </div>
+          <div class="group-actions">
+            <input type="text" id="newGroupName" placeholder="输入分组名称..." class="group-name-input">
+            <button id="createGroup" class="btn btn-primary">创建分组</button>
+          </div>
+        </div>
       </div>
     </div>
 
