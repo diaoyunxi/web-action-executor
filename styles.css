@@ -136,6 +136,13 @@ body {
 .type-drag { background: #EFEBE9; color: #4E342E; }
 .type-rightClick { background: #EDE7F6; color: #4527A0; }
 .type-fileUpload { background: #E8F5E9; color: #1B5E20; }
+.type-if { background: #EDE7F6; color: #4527A0; }
+.type-setVariable { background: #FFF3E0; color: #E65100; }
+.type-setAttribute { background: #E0F2F1; color: #00695C; }
+.type-storage { background: #ECEFF1; color: #37474F; }
+.type-navigate { background: #E3F2FD; color: #1565C0; }
+.type-assert { background: #E8F5E9; color: #2E7D32; }
+.type-waitNetworkIdle { background: #E0F7FA; color: #00838F; }
 
 .operation-controls {
   display: flex;
@@ -378,6 +385,13 @@ body {
 .btn-drag { background: #795548; color: white; }
 .btn-rightclick { background: #673AB7; color: white; }
 .btn-fileupload { background: #4CAF50; color: white; }
+.btn-if { background: #5E35B1; color: white; }
+.btn-setvariable { background: #FB8C00; color: white; }
+.btn-setattribute { background: #00897B; color: white; }
+.btn-storage { background: #546E7A; color: white; }
+.btn-navigate { background: #1976D2; color: white; }
+.btn-assert { background: #43A047; color: white; }
+.btn-networkidle { background: #00ACC1; color: white; }
 
 .btn-execute { background: #E65100; color: white; flex: 2; font-weight: 600; font-size: 14px; }
 .btn-stop    { background: #C62828; color: white; flex: 2; font-weight: 600; font-size: 14px; animation: pulse 1.5s infinite; }
@@ -1331,4 +1345,49 @@ body.dark-mode .empty-groups {
 
 .dblclick-hint {
   border-left: 3px solid #E91E63;
+}
+
+/* ==================== v2.0.0 新增操作提示样式 ==================== */
+
+.if-hint,
+.setvar-hint,
+.attr-hint,
+.storage-hint,
+.navigate-hint,
+.assert-hint,
+.networkidle-hint {
+  font-size: 11px;
+  color: #666;
+  background: #f5f5f5;
+  padding: 6px 10px;
+  border-radius: 5px;
+  margin-top: 4px;
+}
+
+.if-hint {
+  border-left: 3px solid #5E35B1;
+}
+
+.setvar-hint {
+  border-left: 3px solid #FB8C00;
+}
+
+.attr-hint {
+  border-left: 3px solid #00897B;
+}
+
+.storage-hint {
+  border-left: 3px solid #546E7A;
+}
+
+.navigate-hint {
+  border-left: 3px solid #1976D2;
+}
+
+.assert-hint {
+  border-left: 3px solid #43A047;
+}
+
+.networkidle-hint {
+  border-left: 3px solid #00ACC1;
 }

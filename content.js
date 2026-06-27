@@ -1,8 +1,18 @@
 /**
- * 网页操作执行器 - 内容脚本 v1.5.0
+ * 网页操作执行器 - 内容脚本 v2.0.0
  * 在目标页面中执行实际操作
- * 支持: 输入、点击、滑动、刷新、等待、选择、脚本、提取、键盘、截屏、剪贴板
+ * 支持: 输入、点击、滑动、刷新、等待、选择、脚本、提取、键盘、截屏、剪贴板、HTTP请求、
+ *       标签页、通知、Cookie、悬停、双击、拖拽、右键、文件上传、条件判断、变量设置、
+ *       元素属性、本地存储、页面导航、断言、等待网络空闲
  */
+
+// 用于条件判断操作：抛出该错误将跳过当前循环迭代的剩余操作
+class SkipIterationError extends Error {
+  constructor(message = '条件不满足，跳过当前迭代') {
+    super(message);
+    this.name = 'SkipIterationError';
+  }
+}
 
 class OperationExecutor {
   constructor() {
@@ -11,8 +21,22 @@ class OperationExecutor {
     this.loopIndex = 0;
     this.pickerMode = false;
     this.pickerCallback = null;
+    this.variables = {}; // 自定义变量存储（由 setVariable 操作维护）
     this.initMessageListener();
     this.checkRefreshWait();
+    this.loadStoredVariables();
+  }
+
+  // 加载后台存储的自定义变量
+  async loadStoredVariables() {
+    try {
+      const result = await chrome.storage.local.get(['storedData']);
+      if (result.storedData && typeof result.storedData === 'object') {
+        this.variables = { ...result.storedData };
+      }
+    } catch (error) {
+      console.warn('加载存储变量失败:', error);
+    }
   }
 
   initMessageListener() {
@@ -197,12 +221,22 @@ class OperationExecutor {
     }
     for (let i = 0; i < operations.length; i++) {
       if (this.shouldStop) throw new Error('用户停止执行');
+      // 跳过被禁用的操作
       const op = operations[i];
+      if (op.enabled === false) {
+        console.log(`⏭ 操作 ${i + 1} 已禁用，跳过`);
+        continue;
+      }
       console.log(`📌 [${i + 1}/${operations.length}] ${op.type}: ${op.description || ''}`);
       try {
         await this.executeOperation(op);
         console.log(`✅ 操作 ${i + 1} 完成`);
       } catch (error) {
+        // 条件判断操作抛出跳过信号：结束当前迭代但不算失败
+        if (error instanceof SkipIterationError) {
+          console.log(`⏭ 跳过当前迭代: ${error.message}`);
+          return { skipped: true, reason: error.message };
+        }
         console.error(`❌ 操作 ${i + 1} 失败:`, error);
         throw new Error(`步骤 ${i + 1} [${op.description || op.type}] 失败: ${error.message}`);
       }
@@ -233,6 +267,13 @@ class OperationExecutor {
       case 'drag': await this.executeDrag(operation); break;
       case 'rightClick': await this.executeRightClick(operation); break;
       case 'fileUpload': await this.executeFileUpload(operation); break;
+      case 'if': await this.executeIf(operation); break;
+      case 'setVariable': await this.executeSetVariable(operation); break;
+      case 'setAttribute': await this.executeSetAttribute(operation); break;
+      case 'storage': await this.executeStorage(operation); break;
+      case 'navigate': await this.executeNavigate(operation); break;
+      case 'assert': await this.executeAssert(operation); break;
+      case 'waitNetworkIdle': await this.executeWaitNetworkIdle(operation); break;
       default: throw new Error(`未知操作类型: ${operation.type}`);
     }
   }
@@ -257,6 +298,11 @@ class OperationExecutor {
     }));
     input = input.replace(/\{\{loopIndex\}\}/g, String(this.loopIndex || 1));
     input = input.replace(/\{\{loopIndex0\}\}/g, String(Math.max(0, (this.loopIndex || 1) - 1)));
+    // {{var:name}} - 自定义变量 (由 setVariable 操作设置)
+    input = input.replace(/\{\{var:([a-zA-Z_][\w]*)\}\}/g, (match, name) => {
+      const val = this.variables ? this.variables[name] : undefined;
+      return val === undefined || val === null ? match : String(val);
+    });
     return input;
   }
 
@@ -653,6 +699,440 @@ class OperationExecutor {
     element.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
     this.highlightElement(element, '#4CAF50');
     console.log(`📁 文件上传: ${filePaths.length} 个文件`);
+  }
+
+  // ==================== 条件判断操作 ====================
+
+  async executeIf(operation) {
+    const conditionType = operation.ifConditionType || 'elementExists';
+    const selector = this.substituteVariables(operation.ifSelector || '');
+    const ifMode = operation.ifMode || 'skip';
+
+    let conditionMet = false;
+
+    switch (conditionType) {
+      case 'elementExists':
+        conditionMet = !!this.findElement(selector);
+        break;
+      case 'elementNotExists':
+        conditionMet = !this.findElement(selector);
+        break;
+      case 'elementVisible': {
+        const el = this.findElement(selector);
+        conditionMet = !!el && this.isElementVisible(el);
+        break;
+      }
+      case 'elementNotVisible': {
+        const el = this.findElement(selector);
+        conditionMet = !el || !this.isElementVisible(el);
+        break;
+      }
+      case 'variableEquals': {
+        const varName = operation.ifVariableName || '';
+        const expected = this.substituteVariables(operation.ifVariableValue || '');
+        const actual = this.variables ? String(this.variables[varName] ?? '') : '';
+        conditionMet = actual === expected;
+        break;
+      }
+      case 'variableNotEmpty': {
+        const varName = operation.ifVariableName || '';
+        const val = this.variables ? this.variables[varName] : undefined;
+        conditionMet = val !== undefined && val !== null && String(val).trim() !== '';
+        break;
+      }
+      default:
+        throw new Error(`未知条件类型: ${conditionType}`);
+    }
+
+    console.log(`🔀 条件判断 [${conditionType}]: ${conditionMet ? '满足' : '不满足'}`);
+
+    // skip 模式: 条件不满足时跳过当前迭代剩余操作
+    // pass 模式: 条件满足时跳过当前迭代剩余操作 (反向)
+    if (ifMode === 'skip' && !conditionMet) {
+      throw new SkipIterationError(`条件 [${conditionType}] 不满足，跳过当前迭代`);
+    }
+    if (ifMode === 'pass' && conditionMet) {
+      throw new SkipIterationError(`条件 [${conditionType}] 已满足，跳过当前迭代`);
+    }
+  }
+
+  // ==================== 变量设置操作 ====================
+
+  async executeSetVariable(operation) {
+    const varName = operation.varName || '';
+    if (!varName) throw new Error('变量名为空');
+
+    const action = operation.varAction || 'set';
+    const rawValue = operation.varValue || '';
+
+    switch (action) {
+      case 'set': {
+        const value = this.substituteVariables(rawValue);
+        this.variables[varName] = value;
+        console.log(`📦 设置变量: ${varName} = ${String(value).substring(0, 50)}`);
+        break;
+      }
+      case 'clear': {
+        delete this.variables[varName];
+        console.log(`📦 清除变量: ${varName}`);
+        break;
+      }
+      case 'increment': {
+        const current = parseFloat(this.variables[varName]) || 0;
+        const step = parseFloat(this.substituteVariables(rawValue || '1')) || 1;
+        this.variables[varName] = String(current + step);
+        console.log(`📦 自增变量: ${varName} = ${this.variables[varName]}`);
+        break;
+      }
+      case 'append': {
+        const current = this.variables[varName] !== undefined ? String(this.variables[varName]) : '';
+        const value = this.substituteVariables(rawValue);
+        this.variables[varName] = current + value;
+        console.log(`📦 追加变量: ${varName} = ${String(this.variables[varName]).substring(0, 50)}`);
+        break;
+      }
+      default:
+        throw new Error(`未知变量操作: ${action}`);
+    }
+
+    // 持久化到 chrome.storage，供 popup 或下次执行使用
+    chrome.runtime.sendMessage({
+      action: 'storeData',
+      key: varName,
+      value: this.variables[varName]
+    });
+  }
+
+  // ==================== 元素属性操作 ====================
+
+  async executeSetAttribute(operation) {
+    const element = this.findElement(operation.selector);
+    if (!element) throw new Error(`未找到元素: ${operation.selector}`);
+
+    element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    await this.sleep(200);
+
+    const attrAction = operation.attrAction || 'set';
+    const attrName = this.substituteVariables(operation.attrName || '');
+    if (!attrName) throw new Error('属性名为空');
+
+    switch (attrAction) {
+      case 'set': {
+        const attrValue = this.substituteVariables(operation.attrValue || '');
+        element.setAttribute(attrName, attrValue);
+        console.log(`🏷 设置属性: ${attrName}="${attrValue}"`);
+        break;
+      }
+      case 'remove': {
+        element.removeAttribute(attrName);
+        console.log(`🏷 移除属性: ${attrName}`);
+        break;
+      }
+      case 'toggle': {
+        if (element.hasAttribute(attrName)) {
+          element.removeAttribute(attrName);
+          console.log(`🏷 切换属性(移除): ${attrName}`);
+        } else {
+          const attrValue = this.substituteVariables(operation.attrValue || '');
+          element.setAttribute(attrName, attrValue);
+          console.log(`🏷 切换属性(设置): ${attrName}="${attrValue}"`);
+        }
+        break;
+      }
+      default:
+        throw new Error(`未知属性操作: ${attrAction}`);
+    }
+
+    // 触发 change 事件以通知框架
+    element.dispatchEvent(new Event('change', { bubbles: true }));
+    this.highlightElement(element, '#5C6BC0');
+  }
+
+  // ==================== 本地存储操作 ====================
+
+  async executeStorage(operation) {
+    const storageType = operation.storageType || 'localStorage';
+    const storageAction = operation.storageAction || 'get';
+    const key = this.substituteVariables(operation.storageKey || '');
+
+    let storageObj;
+    try {
+      if (storageType === 'localStorage') {
+        storageObj = window.localStorage;
+      } else if (storageType === 'sessionStorage') {
+        storageObj = window.sessionStorage;
+      } else {
+        throw new Error(`未知存储类型: ${storageType}`);
+      }
+    } catch (error) {
+      throw new Error(`无法访问 ${storageType}: ${error.message}`);
+    }
+
+    switch (storageAction) {
+      case 'get': {
+        if (!key) throw new Error('存储键名为空');
+        const value = storageObj.getItem(key) || '';
+        console.log(`🗄 读取 ${storageType}[${key}]: ${value.substring(0, 50)}`);
+        if (operation.storageVariable) {
+          this.variables[operation.storageVariable] = value;
+          chrome.runtime.sendMessage({
+            action: 'storeData',
+            key: operation.storageVariable,
+            value
+          });
+        }
+        break;
+      }
+      case 'set': {
+        if (!key) throw new Error('存储键名为空');
+        const value = this.substituteVariables(operation.storageValue || '');
+        storageObj.setItem(key, value);
+        console.log(`🗄 写入 ${storageType}[${key}]: ${value.substring(0, 50)}`);
+        break;
+      }
+      case 'remove': {
+        if (!key) throw new Error('存储键名为空');
+        storageObj.removeItem(key);
+        console.log(`🗄 删除 ${storageType}[${key}]`);
+        break;
+      }
+      case 'clear': {
+        storageObj.clear();
+        console.log(`🗄 清空 ${storageType}`);
+        break;
+      }
+      default:
+        throw new Error(`未知存储操作: ${storageAction}`);
+    }
+  }
+
+  // ==================== 页面导航操作 ====================
+
+  async executeNavigate(operation) {
+    const navigateAction = operation.navigateAction || 'url';
+    const url = this.substituteVariables(operation.navigateUrl || '');
+    const waitLoad = operation.navigateWaitLoad !== false;
+
+    switch (navigateAction) {
+      case 'url': {
+        if (!url) throw new Error('导航URL为空');
+        let target = url;
+        if (!/^https?:\/\//i.test(target) && !target.startsWith('//')) {
+          target = new URL(target, window.location.href).href;
+        }
+        console.log(`🧭 导航到: ${target}`);
+        if (waitLoad) {
+          window.location.href = target;
+        } else {
+          window.location.replace(target);
+        }
+        break;
+      }
+      case 'back':
+        history.back();
+        console.log('🧭 后退');
+        break;
+      case 'forward':
+        history.forward();
+        console.log('🧭 前进');
+        break;
+      case 'reload':
+        window.location.reload();
+        console.log('🧭 重新加载');
+        break;
+      default:
+        throw new Error(`未知导航操作: ${navigateAction}`);
+    }
+  }
+
+  // ==================== 断言操作 ====================
+
+  async executeAssert(operation) {
+    const assertType = operation.assertType || 'elementExists';
+    const selector = this.substituteVariables(operation.assertSelector || '');
+    const assertMode = operation.assertMode || 'fail'; // fail=失败时停止, warn=仅警告继续
+    const expectedValue = this.substituteVariables(operation.assertValue || '');
+
+    let actualValue = '';
+    let passed = false;
+    let detail = '';
+
+    switch (assertType) {
+      case 'elementExists': {
+        const el = this.findElement(selector);
+        actualValue = el ? '存在' : '不存在';
+        passed = !!el;
+        detail = `元素 ${selector} ${actualValue}`;
+        break;
+      }
+      case 'elementNotExists': {
+        const el = this.findElement(selector);
+        actualValue = el ? '存在' : '不存在';
+        passed = !el;
+        detail = `元素 ${selector} 应不存在 - 实际${actualValue}`;
+        break;
+      }
+      case 'elementVisible': {
+        const el = this.findElement(selector);
+        const visible = !!el && this.isElementVisible(el);
+        actualValue = visible ? '可见' : '不可见';
+        passed = visible;
+        detail = `元素 ${selector} ${actualValue}`;
+        break;
+      }
+      case 'textEquals': {
+        const el = this.findElement(selector);
+        if (!el) {
+          passed = false;
+          detail = `元素 ${selector} 不存在`;
+        } else {
+          actualValue = (el.textContent || '').trim();
+          passed = actualValue === expectedValue;
+          detail = `文本应为 "${expectedValue}" 实际为 "${actualValue.substring(0, 80)}"`;
+        }
+        break;
+      }
+      case 'textContains': {
+        const el = this.findElement(selector);
+        if (!el) {
+          passed = false;
+          detail = `元素 ${selector} 不存在`;
+        } else {
+          actualValue = (el.textContent || '').trim();
+          passed = actualValue.includes(expectedValue);
+          detail = `文本应包含 "${expectedValue}" 实际为 "${actualValue.substring(0, 80)}"`;
+        }
+        break;
+      }
+      case 'valueEquals': {
+        const el = this.findElement(selector);
+        if (!el) {
+          passed = false;
+          detail = `元素 ${selector} 不存在`;
+        } else {
+          actualValue = el.value || '';
+          passed = actualValue === expectedValue;
+          detail = `值应为 "${expectedValue}" 实际为 "${actualValue}"`;
+        }
+        break;
+      }
+      case 'attributeEquals': {
+        const el = this.findElement(selector);
+        const attrName = operation.assertAttribute || '';
+        if (!el) {
+          passed = false;
+          detail = `元素 ${selector} 不存在`;
+        } else if (!attrName) {
+          passed = false;
+          detail = '属性名为空';
+        } else {
+          actualValue = el.getAttribute(attrName) || '';
+          passed = actualValue === expectedValue;
+          detail = `属性 ${attrName} 应为 "${expectedValue}" 实际为 "${actualValue}"`;
+        }
+        break;
+      }
+      case 'variableEquals': {
+        const varName = operation.assertVariableName || '';
+        actualValue = this.variables ? String(this.variables[varName] ?? '') : '';
+        passed = actualValue === expectedValue;
+        detail = `变量 ${varName} 应为 "${expectedValue}" 实际为 "${actualValue}"`;
+        break;
+      }
+      default:
+        throw new Error(`未知断言类型: ${assertType}`);
+    }
+
+    const emoji = passed ? '✅' : '❌';
+    console.log(`${emoji} 断言 [${assertType}]: ${passed ? '通过' : '失败'} - ${detail}`);
+
+    // 发送断言结果到 popup
+    chrome.runtime.sendMessage({
+      action: 'assertResult',
+      passed,
+      assertType,
+      detail,
+      operationId: operation.id
+    });
+
+    if (!passed) {
+      if (assertMode === 'fail') {
+        throw new Error(`断言失败: ${detail}`);
+      } else {
+        console.warn(`⚠️ 断言失败但继续: ${detail}`);
+      }
+    }
+  }
+
+  // ==================== 等待网络空闲操作 ====================
+
+  async executeWaitNetworkIdle(operation) {
+    const idleTime = parseInt(operation.networkIdleTime) || 500; // 持续空闲时间(ms)
+    const timeout = parseInt(operation.networkTimeout) || 30000; // 最大等待时间(ms)
+    const threshold = parseInt(operation.networkThreshold) || 0; // 允许的并发请求数
+
+    const startTime = Date.now();
+    let lastActivity = Date.now();
+    let pendingCount = 0;
+
+    // 通过 PerformanceObserver 监听资源加载
+    const resourceObserver = new PerformanceObserver((list) => {
+      pendingCount = performance.getEntriesByType('resource').length -
+        performance.getEntriesByType('resource')
+          .filter(e => e.responseEnd > 0 && (Date.now() - performance.timeOrigin - e.responseEnd) > 1000)
+          .length;
+      lastActivity = Date.now();
+    });
+    try {
+      resourceObserver.observe({ entryTypes: ['resource', 'xmlhttprequest', 'fetch'] });
+    } catch (e) { /* 老版本浏览器可能不支持某些 entryType */ }
+
+    // 通过猴子补丁 fetch / XMLHttpRequest 监听网络活动
+    const originalFetch = window.fetch;
+    const originalXhrOpen = XMLHttpRequest.prototype.open;
+    const originalXhrSend = XMLHttpRequest.prototype.send;
+    let activeRequests = 0;
+
+    const markActive = () => { activeRequests++; lastActivity = Date.now(); };
+    const markDone = () => { activeRequests = Math.max(0, activeRequests - 1); lastActivity = Date.now(); };
+
+    window.fetch = function (...args) {
+      markActive();
+      const p = originalFetch.apply(this, args);
+      return p.finally(markDone);
+    };
+    XMLHttpRequest.prototype.open = function (...args) {
+      this.__executor_url = args[1];
+      return originalXhrOpen.apply(this, args);
+    };
+    XMLHttpRequest.prototype.send = function (...args) {
+      markActive();
+      this.addEventListener('loadend', markDone);
+      return originalXhrSend.apply(this, args);
+    };
+
+    try {
+      console.log(`🌐 等待网络空闲 (空闲阈值 ${idleTime}ms, 并发上限 ${threshold}, 超时 ${timeout}ms)`);
+      while (true) {
+        if (this.shouldStop) throw new Error('用户停止执行');
+        if (Date.now() - startTime > timeout) {
+          console.warn(`⚠️ 等待网络空闲超时 (${timeout}ms)`);
+          break;
+        }
+        const idleFor = Date.now() - lastActivity;
+        if (idleFor >= idleTime && activeRequests <= threshold) {
+          console.log(`✅ 网络已空闲 ${idleFor}ms, 当前并发请求 ${activeRequests}`);
+          break;
+        }
+        await this.sleep(100);
+      }
+    } finally {
+      // 恢复原始方法
+      window.fetch = originalFetch;
+      XMLHttpRequest.prototype.open = originalXhrOpen;
+      XMLHttpRequest.prototype.send = originalXhrSend;
+      try { resourceObserver.disconnect(); } catch (e) { /* ignore */ }
+    }
   }
 
   checkRefreshWait() {

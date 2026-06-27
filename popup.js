@@ -1,6 +1,7 @@
 /**
- * 网页操作执行器 - 弹出窗口脚本 v1.9.0
- * 新增: 操作启用/禁用、操作验证、搜索过滤、暗色模式、导出JS、批量操作
+ * 网页操作执行器 - 弹出窗口脚本 v2.0.0
+ * 新增: 操作启用/禁用、操作验证、搜索过滤、暗色模式、导出JS、批量操作、操作分组
+ * v2.0.0: 恢复条件判断/变量设置/元素属性/本地存储/页面导航，新增断言/等待网络空闲
  */
 
 class OperationManager {
@@ -257,6 +258,13 @@ class OperationManager {
     document.getElementById('addDrag').addEventListener('click', () => this.addOperation('drag'));
     document.getElementById('addRightClick').addEventListener('click', () => this.addOperation('rightClick'));
     document.getElementById('addFileUpload').addEventListener('click', () => this.addOperation('fileUpload'));
+    document.getElementById('addIf').addEventListener('click', () => this.addOperation('if'));
+    document.getElementById('addSetVariable').addEventListener('click', () => this.addOperation('setVariable'));
+    document.getElementById('addSetAttribute').addEventListener('click', () => this.addOperation('setAttribute'));
+    document.getElementById('addStorage').addEventListener('click', () => this.addOperation('storage'));
+    document.getElementById('addNavigate').addEventListener('click', () => this.addOperation('navigate'));
+    document.getElementById('addAssert').addEventListener('click', () => this.addOperation('assert'));
+    document.getElementById('addWaitNetworkIdle').addEventListener('click', () => this.addOperation('waitNetworkIdle'));
 
     document.getElementById('executeAll').addEventListener('click', () => this.executeAllOperations());
     document.getElementById('stopExecution').addEventListener('click', () => this.stopExecution());
@@ -646,7 +654,14 @@ class OperationManager {
       doubleClick: { ...baseOperation, type: 'doubleClick', selector: '', description: '双击' },
       drag: { ...baseOperation, type: 'drag', sourceSelector: '', targetSelector: '', description: '拖拽' },
       rightClick: { ...baseOperation, type: 'rightClick', selector: '', description: '右键点击' },
-      fileUpload: { ...baseOperation, type: 'fileUpload', selector: '', filePaths: '', description: '文件上传' }
+      fileUpload: { ...baseOperation, type: 'fileUpload', selector: '', filePaths: '', description: '文件上传' },
+      if: { ...baseOperation, type: 'if', ifMode: 'skip', ifConditionType: 'elementExists', ifSelector: '', ifVariableName: '', ifVariableValue: '', description: '条件判断' },
+      setVariable: { ...baseOperation, type: 'setVariable', varName: '', varAction: 'set', varValue: '', description: '变量设置' },
+      setAttribute: { ...baseOperation, type: 'setAttribute', selector: '', attrAction: 'set', attrName: '', attrValue: '', description: '元素属性' },
+      storage: { ...baseOperation, type: 'storage', storageType: 'localStorage', storageAction: 'get', storageKey: '', storageValue: '', storageVariable: '', description: '本地存储' },
+      navigate: { ...baseOperation, type: 'navigate', navigateAction: 'url', navigateUrl: '', navigateWaitLoad: true, description: '页面导航' },
+      assert: { ...baseOperation, type: 'assert', assertType: 'elementExists', assertSelector: '', assertMode: 'fail', assertValue: '', assertAttribute: '', assertVariableName: '', description: '断言验证' },
+      waitNetworkIdle: { ...baseOperation, type: 'waitNetworkIdle', networkIdleTime: 500, networkTimeout: 30000, networkThreshold: 0, description: '等待网络空闲' }
     };
 
     if (typeMap[type]) {
@@ -786,6 +801,57 @@ class OperationManager {
           case 'keyboard':
             if (!op.keyValue || op.keyValue.trim() === '') {
               this.validationErrors.push({ index: opNum, message: `操作 ${opNum} (${opDesc}): 缺少按键值` });
+            }
+            break;
+
+          case 'setAttribute':
+            if (!op.selector || op.selector.trim() === '') {
+              this.validationErrors.push({ index: opNum, message: `操作 ${opNum} (${opDesc}): 缺少选择器` });
+            }
+            if (!op.attrName || op.attrName.trim() === '') {
+              this.validationErrors.push({ index: opNum, message: `操作 ${opNum} (${opDesc}): 缺少属性名` });
+            }
+            break;
+
+          case 'setVariable':
+            if (!op.varName || op.varName.trim() === '') {
+              this.validationErrors.push({ index: opNum, message: `操作 ${opNum} (${opDesc}): 缺少变量名` });
+            }
+            break;
+
+          case 'if':
+            if (op.ifConditionType && op.ifConditionType.startsWith('element') && (!op.ifSelector || op.ifSelector.trim() === '')) {
+              this.validationErrors.push({ index: opNum, message: `操作 ${opNum} (${opDesc}): 缺少元素选择器` });
+            }
+            if (op.ifConditionType && op.ifConditionType.startsWith('variable') && (!op.ifVariableName || op.ifVariableName.trim() === '')) {
+              this.validationErrors.push({ index: opNum, message: `操作 ${opNum} (${opDesc}): 缺少变量名` });
+            }
+            break;
+
+          case 'storage':
+            if (op.storageAction !== 'clear' && (!op.storageKey || op.storageKey.trim() === '')) {
+              this.validationErrors.push({ index: opNum, message: `操作 ${opNum} (${opDesc}): 缺少键名` });
+            }
+            break;
+
+          case 'navigate':
+            if (op.navigateAction === 'url' && (!op.navigateUrl || op.navigateUrl.trim() === '')) {
+              this.validationErrors.push({ index: opNum, message: `操作 ${opNum} (${opDesc}): 缺少URL` });
+            }
+            break;
+
+          case 'assert':
+            if (op.assertType && op.assertType.startsWith('element') && op.assertType !== 'elementExists' && op.assertType !== 'elementNotExists' && op.assertType !== 'elementVisible') {
+              // no-op
+            }
+            if (op.assertType && (op.assertType === 'textEquals' || op.assertType === 'textContains' || op.assertType === 'valueEquals' || op.assertType === 'attributeEquals' || op.assertType === 'elementExists' || op.assertType === 'elementNotExists' || op.assertType === 'elementVisible') && (!op.assertSelector || op.assertSelector.trim() === '')) {
+              this.validationErrors.push({ index: opNum, message: `操作 ${opNum} (${opDesc}): 缺少选择器` });
+            }
+            if (op.assertType === 'attributeEquals' && (!op.assertAttribute || op.assertAttribute.trim() === '')) {
+              this.validationErrors.push({ index: opNum, message: `操作 ${opNum} (${opDesc}): 缺少属性名` });
+            }
+            if (op.assertType === 'variableEquals' && (!op.assertVariableName || op.assertVariableName.trim() === '')) {
+              this.validationErrors.push({ index: opNum, message: `操作 ${opNum} (${opDesc}): 缺少变量名` });
             }
             break;
         }
@@ -1761,6 +1827,253 @@ class OperationManager {
           </div>
           <div class="fileupload-hint">💡 文件上传仅支持 &lt;input type="file"&gt; 元素,支持多文件上传</div>`;
         break;
+
+      case 'if':
+        fields = `
+          <div class="field-row">
+            <div class="field-group flex-1">
+              <label>判断模式</label>
+              <select class="field-ifMode" data-id="${op.id}">
+                <option value="skip" ${op.ifMode === 'skip' ? 'selected' : ''}>条件不满足时跳过当前迭代</option>
+                <option value="pass" ${op.ifMode === 'pass' ? 'selected' : ''}>条件满足时跳过当前迭代</option>
+              </select>
+            </div>
+          </div>
+          <div class="field-row">
+            <div class="field-group flex-1">
+              <label>条件类型</label>
+              <select class="field-ifConditionType" data-id="${op.id}">
+                <option value="elementExists" ${op.ifConditionType === 'elementExists' ? 'selected' : ''}>元素存在</option>
+                <option value="elementNotExists" ${op.ifConditionType === 'elementNotExists' ? 'selected' : ''}>元素不存在</option>
+                <option value="elementVisible" ${op.ifConditionType === 'elementVisible' ? 'selected' : ''}>元素可见</option>
+                <option value="elementNotVisible" ${op.ifConditionType === 'elementNotVisible' ? 'selected' : ''}>元素不可见</option>
+                <option value="variableEquals" ${op.ifConditionType === 'variableEquals' ? 'selected' : ''}>变量等于</option>
+                <option value="variableNotEmpty" ${op.ifConditionType === 'variableNotEmpty' ? 'selected' : ''}>变量非空</option>
+              </select>
+            </div>
+          </div>
+          ${(op.ifConditionType || 'elementExists').startsWith('element') ? `
+          <div class="field-row">
+            <div class="field-group flex-2">
+              <label>元素选择器 ${pickerButton(`ifSelector-${op.id}`)}</label>
+              <input type="text" class="field-ifSelector" data-id="${op.id}" data-picker-target="ifSelector-${op.id}" value="${this.escapeHtml(op.ifSelector || '')}" placeholder="#target, .item">
+            </div>
+          </div>` : `
+          <div class="field-row">
+            <div class="field-group flex-1">
+              <label>变量名</label>
+              <input type="text" class="field-ifVariableName" data-id="${op.id}" value="${this.escapeHtml(op.ifVariableName || '')}" placeholder="myVar">
+            </div>
+            ${op.ifConditionType === 'variableEquals' ? `
+            <div class="field-group flex-2">
+              <label>期望值 (支持变量)</label>
+              <input type="text" class="field-ifVariableValue" data-id="${op.id}" value="${this.escapeHtml(op.ifVariableValue || '')}" placeholder="期望的值">
+            </div>` : ''}
+          </div>`}
+          <div class="if-hint">💡 条件判断会跳过当前循环迭代中剩余的操作；用变量 {{var:name}} 引用先前设置的变量</div>`;
+        break;
+
+      case 'setVariable':
+        fields = `
+          <div class="field-row">
+            <div class="field-group flex-1">
+              <label>变量操作</label>
+              <select class="field-varAction" data-id="${op.id}">
+                <option value="set" ${op.varAction === 'set' ? 'selected' : ''}>设置 (覆盖)</option>
+                <option value="append" ${op.varAction === 'append' ? 'selected' : ''}>追加 (字符串拼接)</option>
+                <option value="increment" ${op.varAction === 'increment' ? 'selected' : ''}>自增 (数字)</option>
+                <option value="clear" ${op.varAction === 'clear' ? 'selected' : ''}>清除</option>
+              </select>
+            </div>
+            <div class="field-group flex-1">
+              <label>变量名</label>
+              <input type="text" class="field-varName" data-id="${op.id}" value="${this.escapeHtml(op.varName || '')}" placeholder="myVar">
+            </div>
+          </div>
+          ${op.varAction !== 'clear' ? `
+          <div class="field-group">
+            <label>变量值 (支持变量)</label>
+            <input type="text" class="field-varValue" data-id="${op.id}" value="${this.escapeHtml(op.varValue || '')}" placeholder="值或 {{var:otherVar}}">
+          </div>` : ''}
+          <div class="setvar-hint">💡 设置的变量可通过 {{var:变量名}} 在后续操作中引用</div>`;
+        break;
+
+      case 'setAttribute':
+        fields = `
+          <div class="field-row">
+            <div class="field-group flex-2">
+              <label>元素选择器 ${pickerButton(`selector-${op.id}`)}</label>
+              <input type="text" class="field-selector" data-id="${op.id}" data-picker-target="selector-${op.id}" value="${this.escapeHtml(op.selector || '')}" placeholder="#target">
+            </div>
+            <div class="field-group flex-1">
+              <label>操作类型</label>
+              <select class="field-attrAction" data-id="${op.id}">
+                <option value="set" ${op.attrAction === 'set' ? 'selected' : ''}>设置属性</option>
+                <option value="remove" ${op.attrAction === 'remove' ? 'selected' : ''}>移除属性</option>
+                <option value="toggle" ${op.attrAction === 'toggle' ? 'selected' : ''}>切换属性</option>
+              </select>
+            </div>
+          </div>
+          <div class="field-row">
+            <div class="field-group flex-1">
+              <label>属性名 (支持变量)</label>
+              <input type="text" class="field-attrName" data-id="${op.id}" value="${this.escapeHtml(op.attrName || '')}" placeholder="disabled, checked, data-id">
+            </div>
+            ${op.attrAction !== 'remove' ? `
+            <div class="field-group flex-2">
+              <label>属性值 (支持变量)</label>
+              <input type="text" class="field-attrValue" data-id="${op.id}" value="${this.escapeHtml(op.attrValue || '')}" placeholder="属性值">
+            </div>` : ''}
+          </div>
+          <div class="attr-hint">💡 设置后自动触发 change 事件；常用于禁用/启用按钮、勾选复选框、修改 data-* 属性</div>`;
+        break;
+
+      case 'storage':
+        fields = `
+          <div class="field-row">
+            <div class="field-group flex-1">
+              <label>存储类型</label>
+              <select class="field-storageType" data-id="${op.id}">
+                <option value="localStorage" ${op.storageType === 'localStorage' ? 'selected' : ''}>localStorage</option>
+                <option value="sessionStorage" ${op.storageType === 'sessionStorage' ? 'selected' : ''}>sessionStorage</option>
+              </select>
+            </div>
+            <div class="field-group flex-1">
+              <label>操作类型</label>
+              <select class="field-storageAction" data-id="${op.id}">
+                <option value="get" ${op.storageAction === 'get' ? 'selected' : ''}>读取</option>
+                <option value="set" ${op.storageAction === 'set' ? 'selected' : ''}>写入</option>
+                <option value="remove" ${op.storageAction === 'remove' ? 'selected' : ''}>删除</option>
+                <option value="clear" ${op.storageAction === 'clear' ? 'selected' : ''}>清空</option>
+              </select>
+            </div>
+          </div>
+          ${op.storageAction !== 'clear' ? `
+          <div class="field-row">
+            <div class="field-group flex-1">
+              <label>键名 (支持变量)</label>
+              <input type="text" class="field-storageKey" data-id="${op.id}" value="${this.escapeHtml(op.storageKey || '')}" placeholder="myKey">
+            </div>
+            ${op.storageAction === 'set' ? `
+            <div class="field-group flex-2">
+              <label>值 (支持变量)</label>
+              <input type="text" class="field-storageValue" data-id="${op.id}" value="${this.escapeHtml(op.storageValue || '')}" placeholder="要存储的值">
+            </div>` : ''}
+          </div>` : ''}
+          ${op.storageAction === 'get' ? `
+          <div class="field-row">
+            <div class="field-group flex-1">
+              <label>保存到变量 (留空则不保存)</label>
+              <input type="text" class="field-storageVariable" data-id="${op.id}" value="${this.escapeHtml(op.storageVariable || '')}" placeholder="storedValue">
+            </div>
+          </div>` : ''}
+          <div class="storage-hint">💡 读取的值可保存到自定义变量，后续用 {{var:变量名}} 引用</div>`;
+        break;
+
+      case 'navigate':
+        fields = `
+          <div class="field-row">
+            <div class="field-group flex-1">
+              <label>导航操作</label>
+              <select class="field-navigateAction" data-id="${op.id}">
+                <option value="url" ${op.navigateAction === 'url' ? 'selected' : ''}>跳转到URL</option>
+                <option value="back" ${op.navigateAction === 'back' ? 'selected' : ''}>后退</option>
+                <option value="forward" ${op.navigateAction === 'forward' ? 'selected' : ''}>前进</option>
+                <option value="reload" ${op.navigateAction === 'reload' ? 'selected' : ''}>重新加载</option>
+              </select>
+            </div>
+            ${op.navigateAction === 'url' ? `
+            <div class="field-group flex-1">
+              <label>等待加载</label>
+              <select class="field-navigateWaitLoad" data-id="${op.id}">
+                <option value="true" ${op.navigateWaitLoad !== false ? 'selected' : ''}>是 (保留历史)</option>
+                <option value="false" ${op.navigateWaitLoad === false ? 'selected' : ''}>否 (替换历史)</option>
+              </select>
+            </div>` : ''}
+          </div>
+          ${op.navigateAction === 'url' ? `
+          <div class="field-group">
+            <label>目标URL (支持变量，支持相对路径)</label>
+            <input type="text" class="field-navigateUrl" data-id="${op.id}" value="${this.escapeHtml(op.navigateUrl || '')}" placeholder="https://example.com 或 /path">
+          </div>` : ''}
+          <div class="navigate-hint">💡 跳转URL后页面会重新加载，建议作为单次操作的最后一步</div>`;
+        break;
+
+      case 'assert':
+        fields = `
+          <div class="field-row">
+            <div class="field-group flex-1">
+              <label>断言类型</label>
+              <select class="field-assertType" data-id="${op.id}">
+                <option value="elementExists" ${op.assertType === 'elementExists' ? 'selected' : ''}>元素存在</option>
+                <option value="elementNotExists" ${op.assertType === 'elementNotExists' ? 'selected' : ''}>元素不存在</option>
+                <option value="elementVisible" ${op.assertType === 'elementVisible' ? 'selected' : ''}>元素可见</option>
+                <option value="textEquals" ${op.assertType === 'textEquals' ? 'selected' : ''}>文本等于</option>
+                <option value="textContains" ${op.assertType === 'textContains' ? 'selected' : ''}>文本包含</option>
+                <option value="valueEquals" ${op.assertType === 'valueEquals' ? 'selected' : ''}>值等于</option>
+                <option value="attributeEquals" ${op.assertType === 'attributeEquals' ? 'selected' : ''}>属性等于</option>
+                <option value="variableEquals" ${op.assertType === 'variableEquals' ? 'selected' : ''}>变量等于</option>
+              </select>
+            </div>
+            <div class="field-group flex-1">
+              <label>失败行为</label>
+              <select class="field-assertMode" data-id="${op.id}">
+                <option value="fail" ${op.assertMode === 'fail' ? 'selected' : ''}>失败时停止</option>
+                <option value="warn" ${op.assertMode === 'warn' ? 'selected' : ''}>仅警告继续</option>
+              </select>
+            </div>
+          </div>
+          ${(op.assertType || 'elementExists').startsWith('element') || (op.assertType === 'textEquals') || (op.assertType === 'textContains') || (op.assertType === 'valueEquals') || (op.assertType === 'attributeEquals') ? `
+          <div class="field-row">
+            <div class="field-group flex-2">
+              <label>元素选择器 ${pickerButton(`assertSelector-${op.id}`)}</label>
+              <input type="text" class="field-assertSelector" data-id="${op.id}" data-picker-target="assertSelector-${op.id}" value="${this.escapeHtml(op.assertSelector || '')}" placeholder="#target">
+            </div>
+          </div>` : ''}
+          ${op.assertType === 'attributeEquals' ? `
+          <div class="field-row">
+            <div class="field-group flex-1">
+              <label>属性名</label>
+              <input type="text" class="field-assertAttribute" data-id="${op.id}" value="${this.escapeHtml(op.assertAttribute || '')}" placeholder="class, data-id">
+            </div>
+          </div>` : ''}
+          ${op.assertType === 'variableEquals' ? `
+          <div class="field-row">
+            <div class="field-group flex-1">
+              <label>变量名</label>
+              <input type="text" class="field-assertVariableName" data-id="${op.id}" value="${this.escapeHtml(op.assertVariableName || '')}" placeholder="myVar">
+            </div>
+          </div>` : ''}
+          ${(op.assertType === 'textEquals' || op.assertType === 'textContains' || op.assertType === 'valueEquals' || op.assertType === 'attributeEquals' || op.assertType === 'variableEquals') ? `
+          <div class="field-row">
+            <div class="field-group flex-2">
+              <label>期望值 (支持变量)</label>
+              <input type="text" class="field-assertValue" data-id="${op.id}" value="${this.escapeHtml(op.assertValue || '')}" placeholder="期望的值">
+            </div>
+          </div>` : ''}
+          <div class="assert-hint">💡 断言用于自动化测试验证；选择"仅警告继续"可收集所有断言结果而不中断流程</div>`;
+        break;
+
+      case 'waitNetworkIdle':
+        fields = `
+          <div class="field-row">
+            <div class="field-group flex-1">
+              <label>空闲阈值(ms)</label>
+              <input type="number" class="field-networkIdleTime" data-id="${op.id}" value="${op.networkIdleTime || 500}" min="100">
+            </div>
+            <div class="field-group flex-1">
+              <label>并发上限</label>
+              <input type="number" class="field-networkThreshold" data-id="${op.id}" value="${op.networkThreshold || 0}" min="0">
+            </div>
+          </div>
+          <div class="field-row">
+            <div class="field-group flex-1">
+              <label>超时(ms)</label>
+              <input type="number" class="field-networkTimeout" data-id="${op.id}" value="${op.networkTimeout || 30000}" min="1000">
+            </div>
+          </div>
+          <div class="networkidle-hint">💡 监听 fetch/XHR 网络请求，持续空闲指定时间后继续；适用于SPA页面加载完成等待</div>`;
+        break;
     }
 
     fields += `
@@ -1813,7 +2126,26 @@ class OperationManager {
       'field-hoverDuration': 'hoverDuration',
       'field-sourceSelector': 'sourceSelector',
       'field-targetSelector': 'targetSelector',
-      'field-filePaths': 'filePaths'
+      'field-filePaths': 'filePaths',
+      // v2.0.0 新增操作的输入型字段
+      'field-ifSelector': 'ifSelector',
+      'field-ifVariableName': 'ifVariableName',
+      'field-ifVariableValue': 'ifVariableValue',
+      'field-varName': 'varName',
+      'field-varValue': 'varValue',
+      'field-attrName': 'attrName',
+      'field-attrValue': 'attrValue',
+      'field-storageKey': 'storageKey',
+      'field-storageValue': 'storageValue',
+      'field-storageVariable': 'storageVariable',
+      'field-navigateUrl': 'navigateUrl',
+      'field-assertSelector': 'assertSelector',
+      'field-assertAttribute': 'assertAttribute',
+      'field-assertVariableName': 'assertVariableName',
+      'field-assertValue': 'assertValue',
+      'field-networkIdleTime': 'networkIdleTime',
+      'field-networkThreshold': 'networkThreshold',
+      'field-networkTimeout': 'networkTimeout'
     };
 
     Object.entries(fieldMap).forEach(([cls, prop]) => {
@@ -1821,7 +2153,7 @@ class OperationManager {
         input.addEventListener('change', (e) => {
           const id = parseInt(e.target.dataset.id);
           let val = e.target.value;
-          if (['field-position', 'field-delay', 'field-waitDuration', 'field-waitTimeout', 'field-waitTimeoutOp', 'field-hoverDuration'].includes(cls)) {
+          if (['field-position', 'field-delay', 'field-waitDuration', 'field-waitTimeout', 'field-waitTimeoutOp', 'field-hoverDuration', 'field-networkIdleTime', 'field-networkThreshold', 'field-networkTimeout'].includes(cls)) {
             val = parseInt(val) || 0;
           }
           this.updateOperation(id, prop, val);
@@ -1907,6 +2239,74 @@ class OperationManager {
       });
     });
 
+    // v2.0.0 新增操作的下拉框字段（需要重新渲染表单）
+    document.querySelectorAll('.field-ifMode').forEach(s => {
+      s.addEventListener('change', (e) => {
+        this.updateOperation(parseInt(e.target.dataset.id), 'ifMode', e.target.value);
+      });
+    });
+
+    document.querySelectorAll('.field-ifConditionType').forEach(s => {
+      s.addEventListener('change', (e) => {
+        this.updateOperation(parseInt(e.target.dataset.id), 'ifConditionType', e.target.value);
+        this.renderOperations();
+      });
+    });
+
+    document.querySelectorAll('.field-varAction').forEach(s => {
+      s.addEventListener('change', (e) => {
+        this.updateOperation(parseInt(e.target.dataset.id), 'varAction', e.target.value);
+        this.renderOperations();
+      });
+    });
+
+    document.querySelectorAll('.field-attrAction').forEach(s => {
+      s.addEventListener('change', (e) => {
+        this.updateOperation(parseInt(e.target.dataset.id), 'attrAction', e.target.value);
+        this.renderOperations();
+      });
+    });
+
+    document.querySelectorAll('.field-storageType').forEach(s => {
+      s.addEventListener('change', (e) => {
+        this.updateOperation(parseInt(e.target.dataset.id), 'storageType', e.target.value);
+      });
+    });
+
+    document.querySelectorAll('.field-storageAction').forEach(s => {
+      s.addEventListener('change', (e) => {
+        this.updateOperation(parseInt(e.target.dataset.id), 'storageAction', e.target.value);
+        this.renderOperations();
+      });
+    });
+
+    document.querySelectorAll('.field-navigateAction').forEach(s => {
+      s.addEventListener('change', (e) => {
+        this.updateOperation(parseInt(e.target.dataset.id), 'navigateAction', e.target.value);
+        this.renderOperations();
+      });
+    });
+
+    document.querySelectorAll('.field-navigateWaitLoad').forEach(s => {
+      s.addEventListener('change', (e) => {
+        const id = parseInt(e.target.dataset.id);
+        this.updateOperation(id, 'navigateWaitLoad', e.target.value === 'true');
+      });
+    });
+
+    document.querySelectorAll('.field-assertType').forEach(s => {
+      s.addEventListener('change', (e) => {
+        this.updateOperation(parseInt(e.target.dataset.id), 'assertType', e.target.value);
+        this.renderOperations();
+      });
+    });
+
+    document.querySelectorAll('.field-assertMode').forEach(s => {
+      s.addEventListener('change', (e) => {
+        this.updateOperation(parseInt(e.target.dataset.id), 'assertMode', e.target.value);
+      });
+    });
+
     ['field-modCtrl', 'field-modShift', 'field-modAlt'].forEach(cls => {
       document.querySelectorAll(`.${cls}`).forEach(cb => {
         cb.addEventListener('change', (e) => {
@@ -1952,7 +2352,7 @@ class OperationManager {
   }
 
   getIcon(type) {
-    const icons = { input: '📝', click: '👆', scroll: '↕️', refresh: '🔄', wait: '⏳', select: '📋', script: '⚡', extract: '🔍', keyboard: '⌨️', screenshot: '📷', clipboard: '📎', httpRequest: '🌐', tab: '🗂', notification: '🔔', cookie: '🍪', hover: '🖱', doubleClick: '👆👆', drag: '🔀', rightClick: '🖱', fileUpload: '📁' };
+    const icons = { input: '📝', click: '👆', scroll: '↕️', refresh: '🔄', wait: '⏳', select: '📋', script: '⚡', extract: '🔍', keyboard: '⌨️', screenshot: '📷', clipboard: '📎', httpRequest: '🌐', tab: '🗂', notification: '🔔', cookie: '🍪', hover: '🖱', doubleClick: '👆👆', drag: '🔀', rightClick: '🖱', fileUpload: '📁', if: '🔀', setVariable: '📦', setAttribute: '🏷', storage: '🗄', navigate: '🧭', assert: '✅', waitNetworkIdle: '🌐' };
     return icons[type] || '❓';
   }
 
@@ -1986,7 +2386,7 @@ class OperationManager {
   }
 
   showHelp() {
-    alert(`📖 使用帮助 v1.9.0
+    alert(`📖 使用帮助 v2.0.0
 
 【操作类型】
 📝 输入   - 填写表单内容 (支持变量)
@@ -1997,6 +2397,26 @@ class OperationManager {
 📋 选择   - 操作下拉列表 (按值/索引/文本)
 ⚡ 脚本   - 执行自定义 JavaScript
 🔍 提取   - 获取元素文本/属性值
+⌨️ 键盘   - 模拟按键/组合键
+📷 截屏   - 捕获页面/元素截图
+📎 剪贴板 - 读写剪贴板内容
+🌐 HTTP   - 发送HTTP请求
+🗂 标签页 - 管理浏览器标签页
+🔔 通知   - 显示系统通知
+🍪 Cookie - 读写Cookie
+🖱 悬停   - 鼠标悬停
+🔀 拖拽   - 拖拽元素
+🖱 右键   - 右键点击
+📁 上传   - 文件上传
+
+【v2.0.0 新增操作】
+🔀 条件判断 (if) - 根据元素存在/变量值决定是否跳过当前迭代
+📦 变量设置 (setVariable) - 设置/追加/自增/清除自定义变量
+🏷 元素属性 (setAttribute) - 设置/移除/切换元素属性
+🗄 本地存储 (storage) - 读写 localStorage/sessionStorage
+🧭 页面导航 (navigate) - 跳转URL/前进/后退/重载
+✅ 断言验证 (assert) - 元素/文本/值/属性/变量断言 (失败停止或警告)
+🌐 等待网络空闲 (waitNetworkIdle) - 等待 fetch/XHR 网络空闲
 
 【元素拾取器】
 点击 🎯 按钮可进入拾取模式
@@ -2007,14 +2427,17 @@ class OperationManager {
 CSS选择器: #id .class [name="x"]
 XPath: //button[contains(text(),'登录')]
 
-【变量】(在输入框中使用)
+【内置变量】(在任意输入框中使用)
 {{timestamp}}  - 时间戳 (毫秒)
 {{date}}       - 当前日期 YYYY-MM-DD
 {{datetime}}   - 当前日期时间
+{{time}}       - 当前时间 HH:MM:SS
 {{random}}     - 0-1 的随机数
 {{randomInt:min:max}} - 范围内随机整数
 {{uuid}}       - 随机 UUID
 {{loopIndex}}  - 当前循环次数 (从1开始)
+{{loopIndex0}} - 当前循环索引 (从0开始)
+{{var:变量名}} - 引用 setVariable/storage 设置的自定义变量
 
 【脚本执行】
 可用函数: findElement(selector), sleep(ms)

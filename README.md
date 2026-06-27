@@ -4,7 +4,7 @@
 
 一个功能强大的 Chrome 浏览器扩展，可以在网页中按顺序自动执行多种操作，支持重复执行和条件循环。
 
-[![Version](https://img.shields.io/badge/version-1.8.0-blue.svg)](https://github.com/diaoyunxi/web-action-executor)
+[![Version](https://img.shields.io/badge/version-2.0.0-blue.svg)](https://github.com/diaoyunxi/web-action-executor)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Chrome](https://img.shields.io/badge/chrome-88%2B-brightgreen.svg)](https://www.google.com/chrome/)
 
@@ -53,6 +53,13 @@
 | **拖拽** | 🔀 | 拖拽元素 | 排序、文件拖放 |
 | **右键** | 🖱 | 右键点击 | 上下文菜单 |
 | **上传** | 📁 | 文件上传 | 表单文件提交 |
+| **条件** | 🔀 | 条件判断，跳过当前迭代 | 分支流程控制 |
+| **变量** | 📦 | 设置/追加/自增/清除变量 | 跨操作数据传递 |
+| **属性** | 🏷 | 设置/移除/切换元素属性 | 禁用按钮、勾选复选框 |
+| **存储** | 🗄 | 读写 localStorage/sessionStorage | 持久化数据、会话状态 |
+| **导航** | 🧭 | 跳转URL/前进/后退/重载 | 页面跳转、流程切换 |
+| **断言** | ✅ | 元素/文本/值/属性/变量断言 | 自动化测试验证 |
+| **网络** | 🌐 | 等待 fetch/XHR 网络空闲 | SPA 加载完成等待 |
 
 ### 🔄 重复执行模式
 
@@ -613,6 +620,29 @@ chrome.storage.local.get(null, console.log)
 ---
 
 ## 📝 更新日志
+
+### v2.0.0 (2026-06-28)
+
+**新增**
+- 🔀 条件判断操作 - 根据元素存在/不存在/可见、变量等于/非空决定是否跳过当前循环迭代
+- 📦 变量设置操作 - 支持设置/追加/自增/清除自定义变量，跨操作传递数据
+- 🏷 元素属性操作 - 设置/移除/切换元素属性，自动触发 change 事件
+- 🗄 本地存储操作 - 读写 localStorage/sessionStorage，可将读取结果保存到变量
+- 🧭 页面导航操作 - 跳转URL/后退/前进/重载，支持相对路径与变量替换
+- ✅ 断言验证操作 - 8种断言类型（元素存在/不存在/可见、文本等于/包含、值等于、属性等于、变量等于），支持失败停止或仅警告
+- 🌐 等待网络空闲操作 - 基于 PerformanceObserver + fetch/XHR 拦截，监听网络请求持续空闲后继续，适用于 SPA 页面加载完成等待
+- 🔧 自定义变量系统 - 新增 `{{var:变量名}}` 变量语法，可引用 setVariable/storage 设置的变量
+- 🔧 操作启用/禁用 - 单个操作可禁用，执行时自动跳过
+
+**修复**
+- 🐛 修复 v1.9.0 中条件判断/变量设置/元素属性/本地存储/页面导航 5 个操作丢失的回归问题
+
+### v1.9.0 (2026-06-27)
+
+**新增**
+- 📁 操作分组管理 - 创建/删除/重命名分组，操作可分配到不同分组，支持折叠展开
+- ✅ 操作验证 - 执行前验证操作配置完整性，提示缺失字段
+- 🔍 操作启用/禁用 - 单个操作可临时禁用，不影响其他操作
 
 ### v1.8.0 (2026-06-26)
 
